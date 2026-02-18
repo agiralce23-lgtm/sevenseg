@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>7セグ認識 Webアプリ v10（Tesseract補助: ssd.traineddata）</title>
+<title>7セグ認識 Webアプリ v11（Tesseract: ssd安定化+初期化診断）</title>
 <style>
   body{font-family:system-ui,-apple-system,sans-serif;margin:0;background:#111;color:#eee}
   .wrap{display:flex;flex-direction:column;gap:10px;padding:10px;max-width:1100px;margin:0 auto}
@@ -148,6 +148,7 @@
         <button id="btnInitTess" class="btn" type="button">Tesseract初期化</button>
       </div>
       <div class="hint mono" id="tessState" style="margin-top:6px">tess: not initialized</div>
+      <pre class="hint mono" id="tessLog" style="max-height:140px;overflow:auto;background:#0b0b0b;border:1px solid #333;border-radius:8px;padding:8px;margin:6px 0 0 0;white-space:pre-wrap;word-break:break-all"></pre>
       <hr style="border:0;border-top:1px solid #333;margin:10px 0">
       <div class="hint">
         ・緑＝確定（安定） / 黄＝未確定 / 水色＝Tesseract補助で確定<br>
@@ -746,6 +747,44 @@ let lastTessAt=0;
 
 function setTessState(msg){ tessStateEl.textContent = "tess: " + msg; }
 
+
+const tessLogEl = document.getElementById("tessLog");
+let _tessLog = [];
+function logLine(s){
+  const ts = new Date().toLocaleTimeString();
+  _tessLog.push(`[${ts}] ${s}`);
+  if(_tessLog.length>25) _tessLog=_tessLog.slice(-25);
+  if(tessLogEl) tessLogEl.textContent = _tessLog.join("\n");
+}
+// Tesseract logger
+let _lastTessStatus="";
+function logTess(m){
+  if(!m) return;
+  const st = m.status || "";
+  const prog = (typeof m.progress==="number") ? ` ${(m.progress*100).toFixed(0)}%` : "";
+  const line = `${st}${prog}`;
+  if(line && line!==_lastTessStatus){
+    _lastTessStatus=line;
+    logLine("tess: " + line);
+  }
+}
+// traineddata/worker/core などが取れているか軽くチェック（HEAD→ダメなら小さくGET）
+async function probeUrl(url){
+  // HEAD
+  try{
+    const r = await fetch(url, {method:"HEAD", cache:"no-store"});
+    if(r.ok) return {ok:true, status:r.status, len:r.headers.get("content-length")||""};
+    return {ok:false, status:r.status, len:r.headers.get("content-length")||""};
+  }catch(_){}
+  // Range GET (対応してないサーバもある)
+  try{
+    const r = await fetch(url, {method:"GET", headers: {"Range":"bytes=0-31"}, cache:"no-store"});
+    if(r.ok || r.status===206) return {ok:true, status:r.status, len:r.headers.get("content-length")||""};
+    return {ok:false, status:r.status, len:r.headers.get("content-length")||""};
+  }catch(e){
+    return {ok:false, status:"ERR", len:(e?.message||String(e))};
+  }
+}
 // ★ここが「ssd」モデル固定
 const TESS_LANG = "ssd";
 
@@ -753,14 +792,29 @@ async function initTesseract(){
   if(tessReady) return true;
   if(!window.Tesseract){ setTessState("Tesseract.js not loaded"); return false; }
   setTessState("initializing… ("+TESS_LANG+")");
+  // --- preflight: traineddata / worker / core が取れるか確認 ---
+  const langPathAbs = new URL("./tessdata/", location.href).href;
+  const tdUrl = new URL(TESS_LANG + ".traineddata", langPathAbs).href;
+  logLine("traineddata url: " + tdUrl);
+  const td = await probeUrl(tdUrl);
+  logLine(`traineddata probe: ${td.ok?"OK":"NG"} (${td.status}) ${td.len}`);
+  if(!td.ok){
+    setTessState("failed: ssd.traineddata が見つからない/取得できない");
+    return false;
+  }
+  // --- preflight end ---
   try{
     // 重要：
     // - langPath は traineddata を置いたフォルダ
     // - gzip:false は ".traineddata" を探す（trueだと ".traineddata.gz" を探す）
     tessWorker = await Tesseract.createWorker({
-      langPath: "./tessdata",
-      gzip: false,
-      logger: (m)=>{ /* console.log(m) */ }
+      // iOS/Safariで相対パスがWorker内で崩れることがあるので、必ず絶対URLにする
+      workerPath: "https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/worker.min.js",
+      corePath:   "https://cdn.jsdelivr.net/npm/tesseract.js-core@5.1.1/tesseract-core.wasm.js",
+      langPath:   new URL("./tessdata/", location.href).href,
+      gzip: false,             // ssd.traineddata (非gz) を使う
+      workerBlobURL: false,    // 環境によってはBlob経由が不安定なのでOFF
+      logger: (m)=>{ logTess(m); }
     });
     await tessWorker.load();
     await tessWorker.loadLanguage(TESS_LANG);
