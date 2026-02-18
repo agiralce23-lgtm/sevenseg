@@ -1,0 +1,998 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>7セグ認識 Webアプリ v10（Tesseract補助: ssd.traineddata）</title>
+<style>
+  body{font-family:system-ui,-apple-system,sans-serif;margin:0;background:#111;color:#eee}
+  .wrap{display:flex;flex-direction:column;gap:10px;padding:10px;max-width:1100px;margin:0 auto}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  button,select,input{font-size:16px;padding:8px 10px}
+  .stage{position:relative;width:100%;aspect-ratio:16/9;background:#000;overflow:hidden;border-radius:10px}
+  video,canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
+  .roi{position:absolute;border:2px solid rgba(255,0,0,.9);box-shadow:0 0 0 9999px rgba(0,0,0,.35);border-radius:8px;pointer-events:none}
+  .panel{background:#1b1b1b;padding:10px;border-radius:10px}
+  .k{color:#9ad}
+  .big{font-size:36px;font-weight:900;letter-spacing:.5px;display:flex;align-items:center;gap:10px}
+  .sub{font-size:14px;color:#cfcfcf;margin-top:4px}
+  .hint{color:#bbb;font-size:13px;line-height:1.45}
+  .grid{display:grid;grid-template-columns:1.1fr .9fr;gap:10px}
+  @media (max-width:820px){.grid{grid-template-columns:1fr}}
+  .chip{display:flex;align-items:center;gap:6px;background:#222;padding:6px 8px;border-radius:999px}
+  details{background:#151515;border-radius:10px;padding:8px 10px}
+  details summary{cursor:pointer}
+  .kv{display:grid;grid-template-columns:160px 1fr 70px;gap:8px;align-items:center;margin-top:8px}
+  .kv label{color:#bbb;font-size:13px}
+  .kv input[type=range]{width:100%}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  .lamp{width:12px;height:12px;border-radius:999px;background:#555;box-shadow:0 0 0 2px rgba(255,255,255,.08) inset}
+  .lamp.green{background:#1fe36d}
+  .lamp.yellow{background:#ffd34d}
+  .lamp.cyan{background:#33d6ff}
+  .btn{background:#2a2a2a;border:1px solid #3a3a3a;color:#fff;border-radius:10px}
+  .btn:active{transform:translateY(1px)}
+  .smallinp{width:86px;padding:6px 8px;border-radius:8px;border:1px solid #333;background:#101010;color:#fff}
+  .warn{color:#ffdf8a}
+</style>
+
+<!-- Tesseract.js（CDN） -->
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+</head>
+<body>
+<div class="wrap">
+  <div class="row">
+    <button id="btnStart" class="btn">カメラ開始</button>
+    <button id="btnStop" class="btn" disabled>停止</button>
+
+    <label>カメラ</label>
+    <select id="selCam"></select>
+
+    <span class="chip"><input id="lockBack" type="checkbox" checked>背面固定</span>
+    <span class="chip"><input id="invert" type="checkbox" checked>反転（黒い数字用）</span>
+    <span class="chip"><input id="dilate" type="checkbox">太らせる</span>
+
+    <label>2値化</label>
+    <select id="thrMode">
+      <option value="otsu">自動（Otsu）</option>
+      <option value="adaptive" selected>局所（平均±C）</option>
+      <option value="manual">手動T</option>
+    </select>
+
+    <label>オフセット/C</label>
+    <input id="thrOff" type="range" min="-80" max="80" value="10">
+    <span id="thrOffVal">10</span>
+
+    <label>使用T</label>
+    <span id="thrUsed" class="mono">—</span>
+
+    <label>桁</label>
+    <select id="digits">
+      <option value="4" selected>4桁</option>
+      <option value="5">5桁</option>
+    </select>
+
+    <label>小数点</label>
+    <select id="decimal">
+      <option value="auto" selected>自動（ドット検出）</option>
+      <option value="last">最後の1桁前（xxx.x）</option>
+      <option value="none">なし</option>
+    </select>
+
+    <label>セグ判定</label>
+    <input id="segThr" type="range" min="0.18" max="0.65" step="0.01" value="0.34">
+    <span id="segThrVal">0.34</span>
+  </div>
+
+  <details open>
+    <summary>安定化 + ゲート + Tesseract補助（SSD）</summary>
+    <div class="row" style="margin-top:8px">
+      <span class="chip"><input id="thrSmooth" type="checkbox" checked>使用Tを平滑化</span>
+      <span class="chip"><input id="stabilize" type="checkbox" checked>ちらつき防止</span>
+      <span class="chip"><input id="hold" type="checkbox" checked>確定値ホールド</span>
+      <span class="chip"><input id="gateOn" type="checkbox" checked>誤認識ゲート</span>
+      <span class="chip"><input id="force1dp" type="checkbox" checked>小数1桁に揃える</span>
+      <span class="chip"><input id="tessOn" type="checkbox" checked>Tesseract補助（ssd）</span>
+    </div>
+
+    <div class="kv"><label>T平滑化係数（0〜0.95）</label><input id="smoothA" type="range" min="0" max="0.95" step="0.05" value="0.75"><span id="smoothAval"></span></div>
+    <div class="kv"><label>確定に必要な連続フレーム</label><input id="needFrames" type="range" min="1" max="20" step="1" value="6"><span id="needFramesVal"></span></div>
+    <div class="kv"><label>確定に必要な信頼度</label><input id="needConf" type="range" min="0.30" max="0.95" step="0.01" value="0.55"><span id="needConfVal"></span></div>
+    <div class="kv"><label>失敗許容（ms）</label><input id="graceMs" type="range" min="0" max="2500" step="50" value="700"><span id="graceMsVal"></span></div>
+    <div class="kv"><label>解析間隔（ms）</label><input id="anMs" type="range" min="40" max="250" step="10" value="90"><span id="anMsVal"></span></div>
+
+    <div class="row" style="margin-top:8px">
+      <span class="chip">最小桁数 <input id="minDigits" class="smallinp" type="number" min="1" max="6" step="1" value="3"></span>
+      <span class="chip">範囲 <input id="minVal" class="smallinp" type="number" step="0.1" value="10"> ～ <input id="maxVal" class="smallinp" type="number" step="0.1" value="250"></span>
+      <span class="chip">局所窓 <input id="adWin" class="smallinp" type="number" min="7" max="61" step="2" value="21"></span>
+    </div>
+
+    <div class="row" style="margin-top:8px">
+      <span class="chip">Tesseract間隔(ms) <input id="tessEvery" class="smallinp" type="number" min="600" max="5000" step="100" value="1200"></span>
+      <span class="chip">失敗が続いたら起動(ms) <input id="tessAfterFail" class="smallinp" type="number" min="200" max="5000" step="100" value="700"></span>
+    </div>
+
+    <div class="hint warn" style="margin-top:8px">
+      Tesseract補助を使うには、同じフォルダに <span class="mono">tessdata/ssd.traineddata</span> を置き、
+      <b>https配信（GitHub Pages等）</b>で開いてください（iPhoneのfile://直開きは失敗しがち）。
+    </div>
+  </details>
+
+  <details>
+    <summary>ROI調整（1回合わせたら保存）</summary>
+    <div class="kv"><label>X</label><input id="roiX" type="range" min="0" max="1" step="0.01"><span id="roiXv"></span></div>
+    <div class="kv"><label>Y</label><input id="roiY" type="range" min="0" max="1" step="0.01"><span id="roiYv"></span></div>
+    <div class="kv"><label>W</label><input id="roiW" type="range" min="0.05" max="1" step="0.01"><span id="roiWv"></span></div>
+    <div class="kv"><label>H</label><input id="roiH" type="range" min="0.05" max="1" step="0.01"><span id="roiHv"></span></div>
+    <div class="row" style="margin-top:8px">
+      <button id="btnRoiReset" type="button" class="btn">ROIリセット</button>
+    </div>
+    <div class="hint" style="margin-top:6px">
+      ROIは「表示窓だけ」まで絞るほど精度UP（周囲の印刷文字を入れない）。
+    </div>
+  </details>
+
+  <div class="grid">
+    <div class="stage">
+      <video id="video" playsinline muted></video>
+      <canvas id="overlay"></canvas>
+      <div id="roi" class="roi"></div>
+    </div>
+    <div class="panel">
+      <div><span class="k">表示（確定）</span></div>
+      <div class="big"><span id="lamp" class="lamp"></span><span id="out">—</span></div>
+      <div id="candLine" class="sub mono">候補: —</div>
+      <div class="hint mono" id="dbg"></div>
+      <div class="row" style="margin-top:10px">
+        <button id="btnCopy" class="btn" type="button">確定値をコピー</button>
+        <button id="btnInitTess" class="btn" type="button">Tesseract初期化</button>
+      </div>
+      <div class="hint mono" id="tessState" style="margin-top:6px">tess: not initialized</div>
+      <hr style="border:0;border-top:1px solid #333;margin:10px 0">
+      <div class="hint">
+        ・緑＝確定（安定） / 黄＝未確定 / 水色＝Tesseract補助で確定<br>
+        ・Tesseractは重いので「失敗が続いたときだけ」低頻度で動かします。
+      </div>
+    </div>
+  </div>
+
+  <canvas id="work" style="display:none"></canvas>
+  <canvas id="ocr" style="display:none"></canvas>
+</div>
+
+<script>
+const $ = (id)=>document.getElementById(id);
+
+const video=$("video"), overlay=$("overlay"), work=$("work"), ocrC=$("ocr");
+const ctxO = overlay.getContext('2d',{willReadFrequently:true});
+const ctxW = work.getContext('2d',{willReadFrequently:true});
+const ctxOCR = ocrC.getContext('2d',{willReadFrequently:true});
+
+const btnStart=$("btnStart"), btnStop=$("btnStop"), selCam=$("selCam");
+const lockBack=$("lockBack"), invertEl=$("invert"), dilateEl=$("dilate");
+
+const thrModeEl=$("thrMode"), thrOffEl=$("thrOff"), thrOffVal=$("thrOffVal"), thrUsedEl=$("thrUsed");
+const digitsEl=$("digits"), decEl=$("decimal"), segThrEl=$("segThr"), segThrVal=$("segThrVal");
+
+const thrSmoothEl=$("thrSmooth"), smoothAEl=$("smoothA"), smoothAval=$("smoothAval");
+const stabilizeEl=$("stabilize"), holdEl=$("hold"), needFramesEl=$("needFrames"), needFramesVal=$("needFramesVal");
+const needConfEl=$("needConf"), needConfVal=$("needConfVal");
+const graceMsEl=$("graceMs"), graceMsVal=$("graceMsVal");
+const anMsEl=$("anMs"), anMsVal=$("anMsVal");
+
+const gateOnEl=$("gateOn"), force1dpEl=$("force1dp"), minDigitsEl=$("minDigits"), minValEl=$("minVal"), maxValEl=$("maxVal"), adWinEl=$("adWin");
+const tessOnEl=$("tessOn"), tessEveryEl=$("tessEvery"), tessAfterFailEl=$("tessAfterFail");
+
+const outEl=$("out"), candLine=$("candLine"), dbgEl=$("dbg"), roiEl=$("roi"), lampEl=$("lamp"), btnCopy=$("btnCopy");
+const roiX=$("roiX"), roiY=$("roiY"), roiW=$("roiW"), roiH=$("roiH");
+const roiXv=$("roiXv"), roiYv=$("roiYv"), roiWv=$("roiWv"), roiHv=$("roiHv");
+const btnRoiReset=$("btnRoiReset");
+
+const btnInitTess=$("btnInitTess");
+const tessStateEl=$("tessState");
+
+let stream=null, rafId=null;
+
+// localStorage keys
+const LS={
+  cam:"sevenseg_cam_deviceid",
+  lock:"sevenseg_lockback",
+  inv:"sevenseg_invert",
+  dil:"sevenseg_dilate",
+  thrMode:"sevenseg_thrMode",
+  off:"sevenseg_throff",
+  seg:"sevenseg_segthr",
+  roi:"sevenseg_roi_v10",
+  thrSmooth:"sevenseg_thrsmooth",
+  smoothA:"sevenseg_smootha",
+  stab:"sevenseg_stab",
+  hold:"sevenseg_hold",
+  nf:"sevenseg_needframes",
+  nc:"sevenseg_needconf",
+  gm:"sevenseg_gracems",
+  an:"sevenseg_anms",
+  gate:"sevenseg_gate",
+  force:"sevenseg_force1dp",
+  mind:"sevenseg_mindigits",
+  minv:"sevenseg_minval",
+  maxv:"sevenseg_maxval",
+  adw:"sevenseg_adwin",
+  tessOn:"sevenseg_tessOn",
+  tessEvery:"sevenseg_tessEvery",
+  tessAfter:"sevenseg_tessAfter"
+};
+
+function clamp(v,a,b){return Math.max(a,Math.min(b,v))}
+function clamp01(v){return clamp(v,0,1)}
+
+const defaultRoi={x:0.18,y:0.44,w:0.64,h:0.18};
+let ROI=loadROI();
+function loadROI(){
+  try{
+    const s=localStorage.getItem(LS.roi); if(!s) return {...defaultRoi};
+    const o=JSON.parse(s);
+    return {x:clamp01(+o.x),y:clamp01(+o.y),w:clamp01(+o.w),h:clamp01(+o.h)};
+  }catch(_){return {...defaultRoi}}
+}
+function saveROI(){localStorage.setItem(LS.roi,JSON.stringify(ROI))}
+
+function setLamp(state){
+  lampEl.classList.remove("green","yellow","cyan");
+  if(state==="green") lampEl.classList.add("green");
+  if(state==="yellow") lampEl.classList.add("yellow");
+  if(state==="cyan") lampEl.classList.add("cyan");
+}
+function setRoiBox(){
+  const stage=roiEl.parentElement;
+  const r=stage.getBoundingClientRect();
+  roiEl.style.left=(ROI.x*r.width)+"px";
+  roiEl.style.top=(ROI.y*r.height)+"px";
+  roiEl.style.width=(ROI.w*r.width)+"px";
+  roiEl.style.height=(ROI.h*r.height)+"px";
+}
+window.addEventListener('resize', setRoiBox);
+
+function syncLabels(){
+  segThrVal.textContent=Number(segThrEl.value).toFixed(2);
+  thrOffVal.textContent=String(thrOffEl.value);
+  smoothAval.textContent=Number(smoothAEl.value).toFixed(2);
+  needFramesVal.textContent=String(needFramesEl.value);
+  needConfVal.textContent=Number(needConfEl.value).toFixed(2);
+  graceMsVal.textContent=String(graceMsEl.value);
+  anMsVal.textContent=String(anMsEl.value);
+
+  roiX.value=ROI.x; roiY.value=ROI.y; roiW.value=ROI.w; roiH.value=ROI.h;
+  roiXv.textContent=ROI.x.toFixed(2);
+  roiYv.textContent=ROI.y.toFixed(2);
+  roiWv.textContent=ROI.w.toFixed(2);
+  roiHv.textContent=ROI.h.toFixed(2);
+}
+function bindRoi(sl,key){
+  sl.addEventListener('input', ()=>{
+    ROI[key]=clamp01(parseFloat(sl.value));
+    if(key==="w") ROI.w=Math.max(0.05,ROI.w);
+    if(key==="h") ROI.h=Math.max(0.05,ROI.h);
+    ROI.x=clamp01(Math.min(ROI.x,1-ROI.w));
+    ROI.y=clamp01(Math.min(ROI.y,1-ROI.h));
+    saveROI(); syncLabels(); setRoiBox();
+  });
+}
+bindRoi(roiX,"x"); bindRoi(roiY,"y"); bindRoi(roiW,"w"); bindRoi(roiH,"h");
+btnRoiReset.onclick=()=>{ ROI={...defaultRoi}; saveROI(); syncLabels(); setRoiBox(); };
+
+function restore(){
+  lockBack.checked=(localStorage.getItem(LS.lock)??"1")==="1";
+  invertEl.checked=(localStorage.getItem(LS.inv)??"1")==="1";
+  dilateEl.checked=(localStorage.getItem(LS.dil)??"0")==="1";
+  thrModeEl.value=(localStorage.getItem(LS.thrMode)??"adaptive");
+  thrOffEl.value=(localStorage.getItem(LS.off)??"10");
+  segThrEl.value=(localStorage.getItem(LS.seg)??"0.34");
+
+  thrSmoothEl.checked=(localStorage.getItem(LS.thrSmooth)??"1")==="1";
+  smoothAEl.value=(localStorage.getItem(LS.smoothA)??"0.75");
+  stabilizeEl.checked=(localStorage.getItem(LS.stab)??"1")==="1";
+  holdEl.checked=(localStorage.getItem(LS.hold)??"1")==="1";
+  needFramesEl.value=(localStorage.getItem(LS.nf)??"6");
+  needConfEl.value=(localStorage.getItem(LS.nc)??"0.55");
+  graceMsEl.value=(localStorage.getItem(LS.gm)??"700");
+  anMsEl.value=(localStorage.getItem(LS.an)??"90");
+
+  gateOnEl.checked=(localStorage.getItem(LS.gate)??"1")==="1";
+  force1dpEl.checked=(localStorage.getItem(LS.force)??"1")==="1";
+  minDigitsEl.value=(localStorage.getItem(LS.mind)??"3");
+  minValEl.value=(localStorage.getItem(LS.minv)??"10");
+  maxValEl.value=(localStorage.getItem(LS.maxv)??"250");
+  adWinEl.value=(localStorage.getItem(LS.adw)??"21");
+
+  tessOnEl.checked=(localStorage.getItem(LS.tessOn)??"1")==="1";
+  tessEveryEl.value=(localStorage.getItem(LS.tessEvery)??"1200");
+  tessAfterFailEl.value=(localStorage.getItem(LS.tessAfter)??"700");
+
+  syncLabels();
+}
+restore();
+
+function persist(){
+  lockBack.onchange=()=>localStorage.setItem(LS.lock, lockBack.checked?"1":"0");
+  invertEl.onchange=()=>localStorage.setItem(LS.inv, invertEl.checked?"1":"0");
+  dilateEl.onchange=()=>localStorage.setItem(LS.dil, dilateEl.checked?"1":"0");
+  thrModeEl.onchange=()=>localStorage.setItem(LS.thrMode, thrModeEl.value);
+  thrOffEl.oninput=()=>{localStorage.setItem(LS.off,thrOffEl.value); syncLabels();}
+  segThrEl.oninput=()=>{localStorage.setItem(LS.seg,segThrEl.value); syncLabels();}
+
+  thrSmoothEl.onchange=()=>localStorage.setItem(LS.thrSmooth, thrSmoothEl.checked?"1":"0");
+  smoothAEl.oninput=()=>{localStorage.setItem(LS.smoothA,smoothAEl.value); syncLabels();}
+
+  stabilizeEl.onchange=()=>localStorage.setItem(LS.stab, stabilizeEl.checked?"1":"0");
+  holdEl.onchange=()=>localStorage.setItem(LS.hold, holdEl.checked?"1":"0");
+  needFramesEl.oninput=()=>{localStorage.setItem(LS.nf,needFramesEl.value); syncLabels();}
+  needConfEl.oninput=()=>{localStorage.setItem(LS.nc,needConfEl.value); syncLabels();}
+  graceMsEl.oninput=()=>{localStorage.setItem(LS.gm,graceMsEl.value); syncLabels();}
+  anMsEl.oninput=()=>{localStorage.setItem(LS.an,anMsEl.value); syncLabels();}
+
+  gateOnEl.onchange=()=>localStorage.setItem(LS.gate, gateOnEl.checked?"1":"0");
+  force1dpEl.onchange=()=>localStorage.setItem(LS.force, force1dpEl.checked?"1":"0");
+  minDigitsEl.onchange=()=>localStorage.setItem(LS.mind, minDigitsEl.value);
+  minValEl.onchange=()=>localStorage.setItem(LS.minv, minValEl.value);
+  maxValEl.onchange=()=>localStorage.setItem(LS.maxv, maxValEl.value);
+  adWinEl.onchange=()=>localStorage.setItem(LS.adw, adWinEl.value);
+
+  tessOnEl.onchange=()=>localStorage.setItem(LS.tessOn, tessOnEl.checked?"1":"0");
+  tessEveryEl.onchange=()=>localStorage.setItem(LS.tessEvery, tessEveryEl.value);
+  tessAfterFailEl.onchange=()=>localStorage.setItem(LS.tessAfter, tessAfterFailEl.value);
+}
+persist();
+
+// camera list
+function isBackLabel(label){ return /(back|rear|environment|背面|リア|後ろ)/i.test(label||""); }
+async function listCams({preserve=true,autoPickBack=true}={}){
+  const prev=preserve?selCam.value:"";
+  const saved=localStorage.getItem(LS.cam)||"";
+  const devices=await navigator.mediaDevices.enumerateDevices();
+  const cams=devices.filter(d=>d.kind==="videoinput");
+  selCam.innerHTML="";
+  cams.forEach((c,i)=>{
+    const opt=document.createElement("option");
+    opt.value=c.deviceId;
+    opt.textContent=c.label||`Camera ${i+1}`;
+    selCam.appendChild(opt);
+  });
+  if([...selCam.options].some(o=>o.value===prev)){ selCam.value=prev; return;}
+  if([...selCam.options].some(o=>o.value===saved)){ selCam.value=saved; return;}
+  if(autoPickBack && lockBack.checked){
+    const back=[...selCam.options].find(o=>isBackLabel(o.textContent));
+    if(back){ selCam.value=back.value; return; }
+  }
+  if(selCam.options.length) selCam.selectedIndex=0;
+}
+selCam.onchange=()=>localStorage.setItem(LS.cam, selCam.value||"");
+
+// start/stop
+async function startCamera(){
+  await listCams({preserve:true,autoPickBack:false});
+  try{
+    const tmp=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:lockBack.checked?"environment":"user"}},audio:false});
+    tmp.getTracks().forEach(t=>t.stop());
+  }catch(e){}
+  await listCams({preserve:true,autoPickBack:true});
+
+  const deviceId=selCam.value||undefined;
+  stream=await navigator.mediaDevices.getUserMedia({
+    video:{
+      deviceId: deviceId?{exact:deviceId}:undefined,
+      facingMode: deviceId?undefined:{ideal:lockBack.checked?"environment":"user"},
+      width:{ideal:1280}, height:{ideal:720}
+    },
+    audio:false
+  });
+
+  video.srcObject=stream;
+  await video.play();
+
+  btnStart.disabled=true;
+  btnStop.disabled=false;
+
+  overlay.width=video.videoWidth;
+  overlay.height=video.videoHeight;
+
+  setRoiBox();
+  resetStabilizer();
+  loop();
+}
+function stopCamera(){
+  cancelAnimationFrame(rafId); rafId=null;
+  if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; }
+  video.pause(); video.srcObject=null;
+
+  btnStart.disabled=false;
+  btnStop.disabled=true;
+
+  thrUsedEl.textContent="—";
+  outEl.textContent="—";
+  candLine.textContent="候補: —";
+  dbgEl.textContent="";
+  setLamp("off");
+}
+btnStart.onclick=async()=>{ try{ await startCamera(); }catch(e){ alert("カメラ開始失敗: "+(e?.message||e)); } };
+btnStop.onclick=()=>stopCamera();
+selCam.onchange=async()=>{
+  localStorage.setItem(LS.cam, selCam.value||"");
+  if(!stream) return;
+  stopCamera();
+  await new Promise(r=>setTimeout(r,200));
+  btnStart.onclick();
+};
+
+// image ops
+function dilate3x3(src,w,h){
+  const dst=new Uint8Array(w*h);
+  for(let y=0;y<h;y++){
+    for(let x=0;x<w;x++){
+      let on=0;
+      for(let yy=Math.max(0,y-1); yy<=Math.min(h-1,y+1) && !on; yy++){
+        const base=yy*w;
+        for(let xx=Math.max(0,x-1); xx<=Math.min(w-1,x+1); xx++){
+          if(src[base+xx]){ on=1; break; }
+        }
+      }
+      dst[y*w+x]=on;
+    }
+  }
+  return dst;
+}
+function otsu(gray){
+  const hist=new Uint32Array(256);
+  for(let i=0;i<gray.length;i++) hist[gray[i]]++;
+  const total=gray.length; if(total===0) return 128;
+  let sum=0; for(let t=0;t<256;t++) sum += t*hist[t];
+  let sumB=0,wB=0,varMax=-1,thr=128;
+  for(let t=0;t<256;t++){
+    wB += hist[t]; if(wB===0) continue;
+    const wF=total-wB; if(wF===0) break;
+    sumB += t*hist[t];
+    const mB=sumB/wB;
+    const mF=(sum-sumB)/wF;
+    const v=wB*wF*(mB-mF)*(mB-mF);
+    if(v>varMax){ varMax=v; thr=t; }
+  }
+  return thr;
+}
+function integralImage(gray,w,h){
+  const ii=new Uint32Array((w+1)*(h+1));
+  for(let y=1;y<=h;y++){
+    let rowsum=0;
+    for(let x=1;x<=w;x++){
+      rowsum += gray[(y-1)*w+(x-1)];
+      ii[y*(w+1)+x] = ii[(y-1)*(w+1)+x] + rowsum;
+    }
+  }
+  return ii;
+}
+function boxMean(ii,w,h,x1,y1,x2,y2){
+  x1=Math.max(0,x1); y1=Math.max(0,y1); x2=Math.min(w-1,x2); y2=Math.min(h-1,y2);
+  const W=w+1;
+  const A=(y1)*W+(x1);
+  const B=(y1)*W+(x2+1);
+  const C=(y2+1)*W+(x1);
+  const D=(y2+1)*W+(x2+1);
+  const sum=ii[D]-ii[B]-ii[C]+ii[A];
+  const area=(x2-x1+1)*(y2-y1+1);
+  return sum/Math.max(1,area);
+}
+
+// blob bbox
+function bestSegmentBySum(arr,thr){
+  let best={ok:false,a:0,b:0,sum:0};
+  let a=-1,sum=0;
+  for(let i=0;i<arr.length;i++){
+    const on=arr[i]>=thr;
+    if(on){ if(a<0){a=i; sum=0;} sum+=arr[i]; }
+    else{ if(a>=0){ const b=i-1; if(sum>best.sum) best={ok:true,a,b,sum}; a=-1; } }
+  }
+  if(a>=0){ const b=arr.length-1; if(sum>best.sum) best={ok:true,a,b,sum}; }
+  return best;
+}
+function findDenseBlobBBox(bw,w,h){
+  const col=new Uint32Array(w);
+  const row=new Uint32Array(h);
+  for(let y=0;y<h;y++){
+    const base=y*w;
+    let rs=0;
+    for(let x=0;x<w;x++){
+      const v=bw[base+x];
+      col[x]+=v; rs+=v;
+    }
+    row[y]=rs;
+  }
+  let colMax=0,rowMax=0;
+  for(const v of col) if(v>colMax) colMax=v;
+  for(const v of row) if(v>rowMax) rowMax=v;
+  const colThr=Math.max(2,Math.floor(colMax*0.06));
+  const rowThr=Math.max(2,Math.floor(rowMax*0.10));
+  const xs=bestSegmentBySum(col,colThr);
+  const ys=bestSegmentBySum(row,rowThr);
+  if(!xs.ok||!ys.ok) return {ok:false,x:0,y:0,w,h};
+  const px=Math.max(1,Math.floor(w*0.03));
+  const py=Math.max(1,Math.floor(h*0.05));
+  const x1=Math.max(0,xs.a-px), x2=Math.min(w-1,xs.b+px);
+  const y1=Math.max(0,ys.a-py), y2=Math.min(h-1,ys.b+py);
+  const ww=x2-x1+1, hh=y2-y1+1;
+  if(ww<Math.floor(w*0.18)||hh<Math.floor(h*0.30)) return {ok:false,x:0,y:0,w,h};
+  return {ok:true,x:x1,y:y1,w:ww,h:hh};
+}
+
+// 7seg sampling
+function sampleWhiteRatio(bw,w,h,cx,cy,r){
+  let white=0,total=0;
+  const x1=Math.max(0,cx-r), x2=Math.min(w-1,cx+r);
+  const y1=Math.max(0,cy-r), y2=Math.min(h-1,cy+r);
+  for(let y=y1;y<=y2;y++){
+    const base=y*w;
+    for(let x=x1;x<=x2;x++){ total++; if(bw[base+x]) white++; }
+  }
+  return total?white/total:0;
+}
+function detectDotBetween(bw,w,h,boxes){
+  const real=boxes.filter(b=>!b.blank);
+  if(real.length<2) return null;
+  for(let i=0;i<real.length-1;i++){
+    const L=real[i], R=real[i+1];
+    const gapL=L.x+L.w, gapR=R.x, gapW=gapR-gapL;
+    if(gapW<=2) continue;
+    const cx=Math.floor(gapL+gapW*0.50);
+    const y1=Math.floor(L.y+L.h*0.70), y2=Math.floor(L.y+L.h*0.95);
+    const r=Math.max(1,Math.floor(Math.min(gapW,L.h)*0.10));
+    let white=0,total=0;
+    for(let y=Math.max(0,y1); y<=Math.min(h-1,y2); y++){
+      const base=y*w;
+      for(let x=Math.max(0,cx-r); x<=Math.min(w-1,cx+r); x++){ total++; if(bw[base+x]) white++; }
+    }
+    const ratio=total?white/total:0;
+    if(ratio>=0.08) return i+1;
+  }
+  return null;
+}
+function recognizeByEqualSplit(bw,w,h,x0,y0,ww,hh,nDigits,decimalMode,segOnThr,debugBoxes){
+  const digitW=ww/nDigits;
+  const samples={a:[0.50,0.18],b:[0.82,0.35],c:[0.82,0.72],d:[0.50,0.88],e:[0.18,0.72],f:[0.18,0.35],g:[0.50,0.53]};
+  const map={"1111110":"0","0110000":"1","1101101":"2","1111001":"3","0110011":"4","1011011":"5","1011111":"6","1110000":"7","1111111":"8","1111011":"9","0000000":""};
+  let digits=[], confSum=0;
+  for(let i=0;i<nDigits;i++){
+    const dx=Math.floor(x0+i*digitW);
+    const dw=Math.max(3,Math.floor(digitW));
+    const rad=Math.max(1,Math.floor(Math.min(dw,hh)*0.018));
+    debugBoxes.push({x:dx,y:y0,w:dw,h:hh});
+    let bits="", local=0;
+    for(const k of ["a","b","c","d","e","f","g"]){
+      const [rx,ry]=samples[k];
+      const sx=Math.floor(dx+rx*dw);
+      const sy=Math.floor(y0+ry*hh);
+      const ratio=sampleWhiteRatio(bw,w,h,sx,sy,rad);
+      bits += (ratio>=segOnThr)?"1":"0";
+      local += Math.min(1, Math.abs(ratio-segOnThr)/Math.max(0.18,(1-segOnThr)));
+    }
+    local/=7;
+    const d=map[bits];
+    digits.push(d!==undefined?d:"");
+    confSum += local;
+  }
+  const raw=digits.join("");
+  let s=raw;
+  if(decimalMode==="last"){
+    if(s.length>=2) s=s.slice(0,-1)+"."+s.slice(-1);
+  }else if(decimalMode==="auto"){
+    const dotIdx=detectDotBetween(bw,w,h,debugBoxes.map(b=>({blank:false,...b})));
+    if(dotIdx!==null){
+      s=raw.slice(0,dotIdx)+"."+raw.slice(dotIdx);
+      s=s.replace(/^\./,"");
+    }else{
+      if(raw.length>=3) s=raw.slice(0,-1)+"."+raw.slice(-1);
+    }
+  }
+  const ok=/^[0-9]+(\.[0-9]+)?$/.test(s);
+  return {text: ok?s:null, conf: confSum/nDigits, debug: ok?"eqSplit":"unmatched(eq)", debugBoxes};
+}
+function recognizeDigits(bw,w,h,nDigits,decimalMode,segOnThr,blob){
+  const bx=blob?.ok?blob.x:0, by=blob?.ok?blob.y:0, bwid=blob?.ok?blob.w:w, bhgt=blob?.ok?blob.h:h;
+  const padX=Math.max(1,Math.floor(bwid*0.02));
+  const padY=Math.max(1,Math.floor(bhgt*0.06));
+  const x0=bx+padX, y0=by+padY;
+  const ww=Math.max(1,bwid-padX*2), hh=Math.max(1,bhgt-padY*2);
+
+  const col=new Uint32Array(ww);
+  for(let y=y0; y<y0+hh; y++){
+    const base=y*w;
+    for(let x=0;x<ww;x++) col[x]+=bw[base+(x0+x)];
+  }
+  let colMax=0; for(const v of col) if(v>colMax) colMax=v;
+  const cutThr=Math.max(1,Math.floor(colMax*0.10));
+  let segs=[], a=-1;
+  for(let x=0;x<ww;x++){
+    const on=col[x]>=cutThr;
+    if(on&&a<0) a=x;
+    if(!on&&a>=0){ segs.push({a,b:x-1}); a=-1; }
+  }
+  if(a>=0) segs.push({a,b:ww-1});
+  const minW=Math.max(1,Math.floor(ww*0.010));
+  segs=segs.filter(s=>(s.b-s.a+1)>=minW);
+
+  const debugBoxes=[];
+  if(segs.length<nDigits) return recognizeByEqualSplit(bw,w,h,x0,y0,ww,hh,nDigits,decimalMode,segOnThr,debugBoxes);
+  if(segs.length>nDigits){
+    segs.sort((s1,s2)=>(s2.b-s1.a)-(s1.b-s1.a));
+    segs=segs.slice(0,nDigits);
+    segs.sort((s1,s2)=>s1.a-s2.a);
+  }
+  const boxes=segs.map(s=>({blank:false,x:x0+s.a,y:y0,w:(s.b-s.a+1),h:hh}));
+
+  const samples={a:[0.50,0.18],b:[0.82,0.35],c:[0.82,0.72],d:[0.50,0.88],e:[0.18,0.72],f:[0.18,0.35],g:[0.50,0.53]};
+  const map={"1111110":"0","0110000":"1","1101101":"2","1111001":"3","0110011":"4","1011011":"5","1011111":"6","1110000":"7","1111111":"8","1111011":"9","0000000":""};
+
+  let digits=[], confSum=0;
+  for(const b of boxes){
+    debugBoxes.push({x:b.x,y:b.y,w:b.w,h:b.h});
+    const dw=Math.max(3,b.w), dh=Math.max(3,b.h);
+    const rad=Math.max(1,Math.floor(Math.min(dw,dh)*0.018));
+    let bits="", local=0;
+    for(const k of ["a","b","c","d","e","f","g"]){
+      const [rx,ry]=samples[k];
+      const sx=Math.floor(b.x+rx*dw);
+      const sy=Math.floor(b.y+ry*dh);
+      const ratio=sampleWhiteRatio(bw,w,h,sx,sy,rad);
+      bits += (ratio>=segOnThr)?"1":"0";
+      local += Math.min(1, Math.abs(ratio-segOnThr)/Math.max(0.18,(1-segOnThr)));
+    }
+    local/=7;
+    const d=(map[bits]!==undefined)?map[bits]:"";
+    digits.push(d);
+    confSum += local;
+  }
+
+  const raw=digits.join("");
+  let s=raw;
+  if(decimalMode==="last"){
+    if(s.length>=2) s=s.slice(0,-1)+"."+s.slice(-1);
+  }else if(decimalMode==="auto"){
+    const dotIdx=detectDotBetween(bw,w,h,boxes);
+    if(dotIdx!==null){
+      s=raw.slice(0,dotIdx)+"."+raw.slice(dotIdx);
+      s=s.replace(/^\./,"");
+    }else{
+      if(raw.length>=3) s=raw.slice(0,-1)+"."+raw.slice(-1);
+    }
+  }
+  const ok=/^[0-9]+(\.[0-9]+)?$/.test(s);
+  return {text: ok?s:null, conf: confSum/Math.max(1,boxes.length), debug: ok?"ok":"unmatched", debugBoxes};
+}
+
+// stabilizer / gate
+let lastCand=null, consec=0, stableText=null, stableConf=0, lastOkAt=0;
+function resetStabilizer(){ lastCand=null; consec=0; stableText=null; stableConf=0; lastOkAt=0; setLamp("off"); }
+
+function toFixed1dp(text){
+  if(!force1dpEl.checked || !text) return text;
+  if(text.includes(".")) return text;
+  return text + ".0";
+}
+function passesGate(text){
+  if(!gateOnEl.checked) return true;
+  if(!text) return false;
+  const digitsOnly=text.replace(".","");
+  const minD=parseInt(minDigitsEl.value||"3",10);
+  if(digitsOnly.length<minD) return false;
+  const v=parseFloat(text);
+  const minV=parseFloat(minValEl.value||"0"), maxV=parseFloat(maxValEl.value||"9999");
+  if(Number.isNaN(v)) return false;
+  if(v<minV || v>maxV) return false;
+  return true;
+}
+
+btnCopy.onclick=async()=>{
+  const t=stableText||outEl.textContent;
+  if(!t||t==="—") return;
+  try{ await navigator.clipboard.writeText(t); }
+  catch(_){ prompt("コピーして使ってください:", t); }
+};
+
+// threshold smoothing
+let T_sm=null;
+
+function computeBW(gray,w,h){
+  const inv=invertEl.checked;
+  const mode=thrModeEl.value;
+  const off=parseInt(thrOffEl.value,10);
+  let bw=new Uint8Array(w*h);
+
+  if(mode==="adaptive"){
+    const win = clamp(parseInt(adWinEl.value||"21",10), 7, 61) | 0;
+    const half = Math.floor(win/2);
+    const ii = integralImage(gray,w,h);
+    for(let y=0;y<h;y++){
+      for(let x=0;x<w;x++){
+        const mean = boxMean(ii,w,h,x-half,y-half,x+half,y+half);
+        const thr = clamp(mean + off, 0, 255);
+        const g = gray[y*w+x];
+        const on = inv ? (g < thr) : (g > thr);
+        bw[y*w+x] = on?1:0;
+      }
+    }
+    thrUsedEl.textContent="local";
+  }else{
+    let T = (mode==="otsu") ? otsu(gray) : 110;
+    T = clamp(T + off, 0, 255);
+    if(thrSmoothEl.checked){
+      const a=parseFloat(smoothAEl.value);
+      if(T_sm===null) T_sm=T;
+      T_sm = a*T_sm + (1-a)*T;
+      T = Math.round(T_sm);
+    }else{
+      T_sm=null;
+    }
+    thrUsedEl.textContent=String(T);
+    for(let i=0;i<gray.length;i++){
+      const on = inv ? (gray[i] < T) : (gray[i] > T);
+      bw[i]=on?1:0;
+    }
+  }
+  if(dilateEl.checked) bw=dilate3x3(bw,w,h);
+  return bw;
+}
+
+// Tesseract worker (SSD)
+let tessWorker=null;
+let tessReady=false;
+let tessBusy=false;
+let lastTessAt=0;
+
+function setTessState(msg){ tessStateEl.textContent = "tess: " + msg; }
+
+// ★ここが「ssd」モデル固定
+const TESS_LANG = "ssd";
+
+async function initTesseract(){
+  if(tessReady) return true;
+  if(!window.Tesseract){ setTessState("Tesseract.js not loaded"); return false; }
+  setTessState("initializing… ("+TESS_LANG+")");
+  try{
+    // 重要：
+    // - langPath は traineddata を置いたフォルダ
+    // - gzip:false は ".traineddata" を探す（trueだと ".traineddata.gz" を探す）
+    tessWorker = await Tesseract.createWorker({
+      langPath: "./tessdata",
+      gzip: false,
+      logger: (m)=>{ /* console.log(m) */ }
+    });
+    await tessWorker.load();
+    await tessWorker.loadLanguage(TESS_LANG);
+    await tessWorker.initialize(TESS_LANG);
+
+    // 数字+ドットだけに制限（誤認識減らす）
+    await tessWorker.setParameters({
+      tessedit_char_whitelist: "0123456789.",
+      tessedit_pageseg_mode: Tesseract.PSM.SINGLE_WORD
+    });
+
+    tessReady=true;
+    setTessState("ready ("+TESS_LANG+")");
+    return true;
+  }catch(e){
+    tessReady=false;
+    setTessState("failed: " + (e?.message||e));
+    try{ await tessWorker?.terminate?.(); }catch(_){}
+    tessWorker=null;
+    return false;
+  }
+}
+btnInitTess.onclick=async()=>{ await initTesseract(); };
+
+// build OCR canvas from BW (white bg, black segments)
+function buildOcrCanvasFromBW(bw,w,h){
+  const maxW=420;
+  let tw=w, th=h;
+  if(w>maxW){
+    const s=maxW/w;
+    tw=Math.round(w*s);
+    th=Math.round(h*s);
+  }
+  ocrC.width=tw; ocrC.height=th;
+
+  const img = ctxOCR.createImageData(w,h);
+  const d=img.data;
+  for(let i=0;i<bw.length;i++){
+    const v = bw[i] ? 0 : 255;
+    const p=i*4;
+    d[p]=v; d[p+1]=v; d[p+2]=v; d[p+3]=255;
+  }
+  const tmp=document.createElement("canvas");
+  tmp.width=w; tmp.height=h;
+  tmp.getContext("2d").putImageData(img,0,0);
+  ctxOCR.imageSmoothingEnabled = true;
+  ctxOCR.clearRect(0,0,tw,th);
+  ctxOCR.drawImage(tmp,0,0,w,h,0,0,tw,th);
+}
+
+function cleanTessText(text){
+  if(!text) return null;
+  let s = text.replace(/\s+/g,"").trim();
+  s = s.replace(/,/g,".");
+  s = s.replace(/[Oo]/g,"0");
+  s = s.replace(/[^0-9.]/g,"");
+  const firstDot = s.indexOf(".");
+  if(firstDot>=0){
+    s = s.slice(0, firstDot+1) + s.slice(firstDot+1).replace(/\./g,"");
+  }
+  s = s.replace(/^\./,"").replace(/\.$/,"");
+  if(!s) return null;
+
+  const decMode=decEl.value;
+  if(decMode==="none"){
+    s = s.replace(/\./g,"");
+  }else if(decMode==="last"){
+    if(!s.includes(".") && s.length>=2){
+      s = s.slice(0,-1)+"."+s.slice(-1);
+    }
+  }else{
+    if(!s.includes(".") && s.length>=3){
+      s = s.slice(0,-1)+"."+s.slice(-1);
+    }
+  }
+
+  if(!/^[0-9]+(\.[0-9]+)?$/.test(s)) return null;
+  return toFixed1dp(s);
+}
+
+async function tessRecognize(bw,w,h){
+  if(!tessOnEl.checked) return null;
+  if(tessBusy) return null;
+
+  const now=performance.now();
+  const every=parseInt(tessEveryEl.value||"1200",10);
+  if(now - lastTessAt < every) return null;
+
+  if(!tessReady){
+    const ok = await initTesseract();
+    if(!ok) return null;
+  }
+
+  tessBusy=true;
+  lastTessAt=now;
+  try{
+    buildOcrCanvasFromBW(bw,w,h);
+    const { data } = await tessWorker.recognize(ocrC);
+    const cleaned = cleanTessText(data?.text||"");
+    return cleaned;
+  }catch(e){
+    setTessState("recognize failed: "+(e?.message||e));
+    return null;
+  }finally{
+    tessBusy=false;
+  }
+}
+
+// loop
+let lastAnalyzeAt=0;
+let failSince=null;
+
+function loop(){
+  const now=performance.now();
+  const interval=parseInt(anMsEl.value,10);
+
+  ctxO.clearRect(0,0,overlay.width,overlay.height);
+
+  const rx=Math.floor(ROI.x*overlay.width);
+  const ry=Math.floor(ROI.y*overlay.height);
+  const rw=Math.floor(ROI.w*overlay.width);
+  const rh=Math.floor(ROI.h*overlay.height);
+
+  ctxO.strokeStyle='rgba(255,0,0,.95)'; ctxO.lineWidth=3;
+  ctxO.strokeRect(rx+1,ry+1,rw-2,rh-2);
+
+  if(now-lastAnalyzeAt < interval){
+    rafId=requestAnimationFrame(loop);
+    return;
+  }
+  lastAnalyzeAt=now;
+
+  work.width=rw; work.height=rh;
+  ctxW.drawImage(video, rx, ry, rw, rh, 0, 0, rw, rh);
+  const img=ctxW.getImageData(0,0,rw,rh);
+  const d=img.data;
+
+  const gray=new Uint8Array(rw*rh);
+  for(let i=0,p=0;i<d.length;i+=4,p++){
+    const r=d[i], g=d[i+1], b=d[i+2];
+    gray[p]=(r*0.299 + g*0.587 + b*0.114)|0;
+  }
+
+  const bw = computeBW(gray,rw,rh);
+
+  const blob=findDenseBlobBBox(bw,rw,rh);
+  if(blob.ok){
+    ctxO.strokeStyle='rgba(0,200,255,.95)'; ctxO.lineWidth=3;
+    ctxO.strokeRect(rx+blob.x+1, ry+blob.y+1, blob.w-2, blob.h-2);
+  }
+
+  const nd=parseInt(digitsEl.value,10);
+  const decMode=decEl.value;
+  const segThr=parseFloat(segThrEl.value);
+  const res=recognizeDigits(bw,rw,rh,nd,decMode,segThr,blob);
+
+  if(res.debugBoxes && res.debugBoxes.length){
+    ctxO.strokeStyle='rgba(255,230,0,.95)'; ctxO.lineWidth=2;
+    for(const b of res.debugBoxes){
+      ctxO.strokeRect(rx+b.x, ry+b.y, b.w, b.h);
+    }
+  }
+
+  let candidate=res.text;
+  const conf=res.conf ?? 0;
+  if(candidate) candidate=toFixed1dp(candidate);
+  candLine.textContent = `候補: ${candidate ?? "—"}  (conf=${conf.toFixed(2)} / ${res.debug}${tessBusy?" + tess…":""})`;
+
+  const needFrames=parseInt(needFramesEl.value,10);
+  const needConf=parseFloat(needConfEl.value);
+  const graceMs=parseInt(graceMsEl.value,10);
+
+  let acceptable = (candidate !== null) && (conf >= needConf) && passesGate(candidate);
+
+  if(!acceptable){
+    if(failSince===null) failSince=now;
+    const after=parseInt(tessAfterFailEl.value||"700",10);
+    if(tessOnEl.checked && (now - failSince) >= after){
+      tessRecognize(bw,rw,rh).then(tessText=>{
+        if(!tessText) return;
+        if(!passesGate(tessText)) return;
+        stableText=tessText; stableConf=0.90; lastOkAt=performance.now();
+        outEl.textContent=stableText;
+        setLamp("cyan");
+      });
+    }
+  }else{
+    failSince=null;
+  }
+
+  if(acceptable){
+    lastOkAt = now;
+    if(candidate === lastCand) consec++;
+    else { lastCand=candidate; consec=1; }
+
+    if(!stabilizeEl.checked){
+      stableText=candidate; stableConf=conf; outEl.textContent=stableText; setLamp("green");
+    }else{
+      if(consec >= needFrames){
+        stableText=candidate; stableConf=conf; outEl.textContent=stableText; setLamp("green");
+      }else{
+        if(!holdEl.checked) outEl.textContent="—";
+        else if(stableText) outEl.textContent=stableText;
+        setLamp("yellow");
+      }
+    }
+  }else{
+    lastCand=null; consec=0;
+    const withinGrace = stableText && (now - lastOkAt) <= graceMs;
+    if(withinGrace && holdEl.checked){
+      if(!lampEl.classList.contains("cyan")) setLamp("green");
+      outEl.textContent=stableText;
+    }else{
+      if(!holdEl.checked) outEl.textContent="—";
+      else if(stableText) outEl.textContent=stableText;
+      if(!lampEl.classList.contains("cyan")) setLamp("yellow");
+    }
+  }
+
+  const camLabel = selCam.selectedOptions?.[0]?.textContent || "";
+  dbgEl.textContent =
+    `thr=${thrModeEl.value} inv=${invertEl.checked?1:0} dil=${dilateEl.checked?1:0} segThr=${segThr.toFixed(2)} | ` +
+    `stable=${stabilizeEl.checked?1:0} consec=${consec}/${needFrames} conf=${conf.toFixed(2)} needConf=${needConf.toFixed(2)} grace=${graceMs}ms gate=${gateOnEl.checked?1:0} | ` +
+    `tess=${tessOnEl.checked?1:0} ready=${tessReady?1:0} busy=${tessBusy?1:0} lang=${TESS_LANG} | cam="${camLabel}"`;
+
+  rafId=requestAnimationFrame(loop);
+}
+
+// init
+navigator.mediaDevices?.addEventListener?.('devicechange', ()=>listCams({preserve:true,autoPickBack:true}));
+listCams({preserve:true,autoPickBack:true}).catch(()=>{});
+setRoiBox(); syncLabels();
+</script>
+</body>
+</html>
