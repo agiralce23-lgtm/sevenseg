@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>7セグ認識 Webアプリ v11（Tesseract: ssd安定化+初期化診断）</title>
+<title>7セグ認識 Webアプリ v12（iOS安定化 / Tesseract SSD任意）</title>
 <style>
   body{font-family:system-ui,-apple-system,sans-serif;margin:0;background:#111;color:#eee}
   .wrap{display:flex;flex-direction:column;gap:10px;padding:10px;max-width:1100px;margin:0 auto}
@@ -11,7 +11,8 @@
   button,select,input{font-size:16px;padding:8px 10px}
   .stage{position:relative;width:100%;aspect-ratio:16/9;background:#000;overflow:hidden;border-radius:10px}
   video,canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
-  .roi{position:absolute;border:2px solid rgba(255,0,0,.9);box-shadow:0 0 0 9999px rgba(0,0,0,.35);border-radius:8px;pointer-events:none}
+  .roi{position:absolute;border:2px solid rgba(255,0,0,.9);box-shadow:0 0,0 9999px rgba(0,0,0,.35);border-radius:8px;pointer-events:none}
+  .roi{box-shadow:0 0 0 9999px rgba(0,0,0,.35)}
   .panel{background:#1b1b1b;padding:10px;border-radius:10px}
   .k{color:#9ad}
   .big{font-size:36px;font-weight:900;letter-spacing:.5px;display:flex;align-items:center;gap:10px}
@@ -34,6 +35,8 @@
   .btn:active{transform:translateY(1px)}
   .smallinp{width:86px;padding:6px 8px;border-radius:8px;border:1px solid #333;background:#101010;color:#fff}
   .warn{color:#ffdf8a}
+  .ok{color:#b8ffb8}
+  .bad{color:#ffb8b8}
 </style>
 
 <!-- Tesseract.js（CDN） -->
@@ -41,6 +44,7 @@
 </head>
 <body>
 <div class="wrap">
+
   <div class="row">
     <button id="btnStart" class="btn">カメラ開始</button>
     <button id="btnStop" class="btn" disabled>停止</button>
@@ -85,37 +89,45 @@
   </div>
 
   <details open>
-    <summary>安定化 + ゲート + Tesseract補助（SSD）</summary>
+    <summary>iOS 安定化（落ちにくい設定） + ゲート + Tesseract補助（SSD 任意）</summary>
+
     <div class="row" style="margin-top:8px">
+      <span class="chip"><input id="iosSafe" type="checkbox" checked>iOSセーフモード（軽量）</span>
       <span class="chip"><input id="thrSmooth" type="checkbox" checked>使用Tを平滑化</span>
       <span class="chip"><input id="stabilize" type="checkbox" checked>ちらつき防止</span>
       <span class="chip"><input id="hold" type="checkbox" checked>確定値ホールド</span>
       <span class="chip"><input id="gateOn" type="checkbox" checked>誤認識ゲート</span>
       <span class="chip"><input id="force1dp" type="checkbox" checked>小数1桁に揃える</span>
-      <span class="chip"><input id="tessOn" type="checkbox" checked>Tesseract補助（ssd）</span>
+      <span class="chip"><input id="tessOn" type="checkbox">Tesseract補助（ssd）※重い</span>
     </div>
 
     <div class="kv"><label>T平滑化係数（0〜0.95）</label><input id="smoothA" type="range" min="0" max="0.95" step="0.05" value="0.75"><span id="smoothAval"></span></div>
     <div class="kv"><label>確定に必要な連続フレーム</label><input id="needFrames" type="range" min="1" max="20" step="1" value="6"><span id="needFramesVal"></span></div>
     <div class="kv"><label>確定に必要な信頼度</label><input id="needConf" type="range" min="0.30" max="0.95" step="0.01" value="0.55"><span id="needConfVal"></span></div>
-    <div class="kv"><label>失敗許容（ms）</label><input id="graceMs" type="range" min="0" max="2500" step="50" value="700"><span id="graceMsVal"></span></div>
-    <div class="kv"><label>解析間隔（ms）</label><input id="anMs" type="range" min="40" max="250" step="10" value="90"><span id="anMsVal"></span></div>
+    <div class="kv"><label>失敗許容（ms）</label><input id="graceMs" type="range" min="0" max="3000" step="50" value="900"><span id="graceMsVal"></span></div>
+    <div class="kv"><label>解析間隔（ms）</label><input id="anMs" type="range" min="60" max="400" step="10" value="140"><span id="anMsVal"></span></div>
 
     <div class="row" style="margin-top:8px">
       <span class="chip">最小桁数 <input id="minDigits" class="smallinp" type="number" min="1" max="6" step="1" value="3"></span>
       <span class="chip">範囲 <input id="minVal" class="smallinp" type="number" step="0.1" value="10"> ～ <input id="maxVal" class="smallinp" type="number" step="0.1" value="250"></span>
       <span class="chip">局所窓 <input id="adWin" class="smallinp" type="number" min="7" max="61" step="2" value="21"></span>
+      <span class="chip">処理サイズ上限W <input id="maxProcW" class="smallinp" type="number" min="200" max="900" step="10" value="420"></span>
     </div>
 
     <div class="row" style="margin-top:8px">
-      <span class="chip">Tesseract間隔(ms) <input id="tessEvery" class="smallinp" type="number" min="600" max="5000" step="100" value="1200"></span>
-      <span class="chip">失敗が続いたら起動(ms) <input id="tessAfterFail" class="smallinp" type="number" min="200" max="5000" step="100" value="700"></span>
+      <span class="chip">Tesseract間隔(ms) <input id="tessEvery" class="smallinp" type="number" min="800" max="8000" step="100" value="2500"></span>
+      <span class="chip">失敗が続いたら起動(ms) <input id="tessAfterFail" class="smallinp" type="number" min="400" max="8000" step="100" value="1600"></span>
+      <button id="btnInitTess" class="btn" type="button">Tesseract初期化</button>
+      <button id="btnKillTess" class="btn" type="button">Tesseract停止（解放）</button>
     </div>
 
     <div class="hint warn" style="margin-top:8px">
-      Tesseract補助を使うには、同じフォルダに <span class="mono">tessdata/ssd.traineddata</span> を置き、
-      <b>https配信（GitHub Pages等）</b>で開いてください（iPhoneのfile://直開きは失敗しがち）。
+      iPhoneの「問題が繰り返し起きました」は<strong>メモリ/CPU過多でタブが落ちた</strong>可能性が高いです。<br>
+      まずは <b>iOSセーフモードON + Tesseract OFF</b> で安定させてから、必要ならTesseractをONにしてください。
     </div>
+
+    <div class="hint mono" id="probe" style="margin-top:6px">probe: —</div>
+    <div class="hint mono" id="tessState" style="margin-top:6px">tess: not initialized</div>
   </details>
 
   <details>
@@ -145,29 +157,28 @@
       <div class="hint mono" id="dbg"></div>
       <div class="row" style="margin-top:10px">
         <button id="btnCopy" class="btn" type="button">確定値をコピー</button>
-        <button id="btnInitTess" class="btn" type="button">Tesseract初期化</button>
       </div>
-      <div class="hint mono" id="tessState" style="margin-top:6px">tess: not initialized</div>
-      <pre class="hint mono" id="tessLog" style="max-height:140px;overflow:auto;background:#0b0b0b;border:1px solid #333;border-radius:8px;padding:8px;margin:6px 0 0 0;white-space:pre-wrap;word-break:break-all"></pre>
       <hr style="border:0;border-top:1px solid #333;margin:10px 0">
       <div class="hint">
         ・緑＝確定（安定） / 黄＝未確定 / 水色＝Tesseract補助で確定<br>
-        ・Tesseractは重いので「失敗が続いたときだけ」低頻度で動かします。
+        ・Tesseract(SSD)は重いので、iPhoneでは「必要な時だけON」が安全です。
       </div>
     </div>
   </div>
 
   <canvas id="work" style="display:none"></canvas>
   <canvas id="ocr" style="display:none"></canvas>
+  <canvas id="tmpOCRSrc" style="display:none"></canvas>
 </div>
 
 <script>
 const $ = (id)=>document.getElementById(id);
 
-const video=$("video"), overlay=$("overlay"), work=$("work"), ocrC=$("ocr");
+const video=$("video"), overlay=$("overlay"), work=$("work"), ocrC=$("ocr"), tmpOCRSrc=$("tmpOCRSrc");
 const ctxO = overlay.getContext('2d',{willReadFrequently:true});
 const ctxW = work.getContext('2d',{willReadFrequently:true});
 const ctxOCR = ocrC.getContext('2d',{willReadFrequently:true});
+const ctxTmp = tmpOCRSrc.getContext('2d',{willReadFrequently:true});
 
 const btnStart=$("btnStart"), btnStop=$("btnStop"), selCam=$("selCam");
 const lockBack=$("lockBack"), invertEl=$("invert"), dilateEl=$("dilate");
@@ -175,6 +186,7 @@ const lockBack=$("lockBack"), invertEl=$("invert"), dilateEl=$("dilate");
 const thrModeEl=$("thrMode"), thrOffEl=$("thrOff"), thrOffVal=$("thrOffVal"), thrUsedEl=$("thrUsed");
 const digitsEl=$("digits"), decEl=$("decimal"), segThrEl=$("segThr"), segThrVal=$("segThrVal");
 
+const iosSafeEl=$("iosSafe");
 const thrSmoothEl=$("thrSmooth"), smoothAEl=$("smoothA"), smoothAval=$("smoothAval");
 const stabilizeEl=$("stabilize"), holdEl=$("hold"), needFramesEl=$("needFrames"), needFramesVal=$("needFramesVal");
 const needConfEl=$("needConf"), needConfVal=$("needConfVal");
@@ -182,6 +194,7 @@ const graceMsEl=$("graceMs"), graceMsVal=$("graceMsVal");
 const anMsEl=$("anMs"), anMsVal=$("anMsVal");
 
 const gateOnEl=$("gateOn"), force1dpEl=$("force1dp"), minDigitsEl=$("minDigits"), minValEl=$("minVal"), maxValEl=$("maxVal"), adWinEl=$("adWin");
+const maxProcWEl=$("maxProcW");
 const tessOnEl=$("tessOn"), tessEveryEl=$("tessEvery"), tessAfterFailEl=$("tessAfterFail");
 
 const outEl=$("out"), candLine=$("candLine"), dbgEl=$("dbg"), roiEl=$("roi"), lampEl=$("lamp"), btnCopy=$("btnCopy");
@@ -190,7 +203,9 @@ const roiXv=$("roiXv"), roiYv=$("roiYv"), roiWv=$("roiWv"), roiHv=$("roiHv");
 const btnRoiReset=$("btnRoiReset");
 
 const btnInitTess=$("btnInitTess");
+const btnKillTess=$("btnKillTess");
 const tessStateEl=$("tessState");
+const probeEl=$("probe");
 
 let stream=null, rafId=null;
 
@@ -203,7 +218,8 @@ const LS={
   thrMode:"sevenseg_thrMode",
   off:"sevenseg_throff",
   seg:"sevenseg_segthr",
-  roi:"sevenseg_roi_v10",
+  roi:"sevenseg_roi_v12",
+  ios:"sevenseg_iossafe",
   thrSmooth:"sevenseg_thrsmooth",
   smoothA:"sevenseg_smootha",
   stab:"sevenseg_stab",
@@ -218,6 +234,7 @@ const LS={
   minv:"sevenseg_minval",
   maxv:"sevenseg_maxval",
   adw:"sevenseg_adwin",
+  maxpw:"sevenseg_maxProcW",
   tessOn:"sevenseg_tessOn",
   tessEvery:"sevenseg_tessEvery",
   tessAfter:"sevenseg_tessAfter"
@@ -288,6 +305,7 @@ function restore(){
   thrModeEl.value=(localStorage.getItem(LS.thrMode)??"adaptive");
   thrOffEl.value=(localStorage.getItem(LS.off)??"10");
   segThrEl.value=(localStorage.getItem(LS.seg)??"0.34");
+  iosSafeEl.checked=(localStorage.getItem(LS.ios)??"1")==="1";
 
   thrSmoothEl.checked=(localStorage.getItem(LS.thrSmooth)??"1")==="1";
   smoothAEl.value=(localStorage.getItem(LS.smoothA)??"0.75");
@@ -295,8 +313,8 @@ function restore(){
   holdEl.checked=(localStorage.getItem(LS.hold)??"1")==="1";
   needFramesEl.value=(localStorage.getItem(LS.nf)??"6");
   needConfEl.value=(localStorage.getItem(LS.nc)??"0.55");
-  graceMsEl.value=(localStorage.getItem(LS.gm)??"700");
-  anMsEl.value=(localStorage.getItem(LS.an)??"90");
+  graceMsEl.value=(localStorage.getItem(LS.gm)??"900");
+  anMsEl.value=(localStorage.getItem(LS.an)??"140");
 
   gateOnEl.checked=(localStorage.getItem(LS.gate)??"1")==="1";
   force1dpEl.checked=(localStorage.getItem(LS.force)??"1")==="1";
@@ -304,10 +322,11 @@ function restore(){
   minValEl.value=(localStorage.getItem(LS.minv)??"10");
   maxValEl.value=(localStorage.getItem(LS.maxv)??"250");
   adWinEl.value=(localStorage.getItem(LS.adw)??"21");
+  maxProcWEl.value=(localStorage.getItem(LS.maxpw)??"420");
 
-  tessOnEl.checked=(localStorage.getItem(LS.tessOn)??"1")==="1";
-  tessEveryEl.value=(localStorage.getItem(LS.tessEvery)??"1200");
-  tessAfterFailEl.value=(localStorage.getItem(LS.tessAfter)??"700");
+  tessOnEl.checked=(localStorage.getItem(LS.tessOn)??"0")==="1";
+  tessEveryEl.value=(localStorage.getItem(LS.tessEvery)??"2500");
+  tessAfterFailEl.value=(localStorage.getItem(LS.tessAfter)??"1600");
 
   syncLabels();
 }
@@ -320,6 +339,7 @@ function persist(){
   thrModeEl.onchange=()=>localStorage.setItem(LS.thrMode, thrModeEl.value);
   thrOffEl.oninput=()=>{localStorage.setItem(LS.off,thrOffEl.value); syncLabels();}
   segThrEl.oninput=()=>{localStorage.setItem(LS.seg,segThrEl.value); syncLabels();}
+  iosSafeEl.onchange=()=>localStorage.setItem(LS.ios, iosSafeEl.checked?"1":"0");
 
   thrSmoothEl.onchange=()=>localStorage.setItem(LS.thrSmooth, thrSmoothEl.checked?"1":"0");
   smoothAEl.oninput=()=>{localStorage.setItem(LS.smoothA,smoothAEl.value); syncLabels();}
@@ -337,6 +357,7 @@ function persist(){
   minValEl.onchange=()=>localStorage.setItem(LS.minv, minValEl.value);
   maxValEl.onchange=()=>localStorage.setItem(LS.maxv, maxValEl.value);
   adWinEl.onchange=()=>localStorage.setItem(LS.adw, adWinEl.value);
+  maxProcWEl.onchange=()=>localStorage.setItem(LS.maxpw, maxProcWEl.value);
 
   tessOnEl.onchange=()=>localStorage.setItem(LS.tessOn, tessOnEl.checked?"1":"0");
   tessEveryEl.onchange=()=>localStorage.setItem(LS.tessEvery, tessEveryEl.value);
@@ -378,11 +399,16 @@ async function startCamera(){
   await listCams({preserve:true,autoPickBack:true});
 
   const deviceId=selCam.value||undefined;
+
+  // iOSセーフモード：解像度を抑える（メモリ削減）
+  const idealW = iosSafeEl.checked ? 640 : 1280;
+  const idealH = iosSafeEl.checked ? 480 : 720;
+
   stream=await navigator.mediaDevices.getUserMedia({
     video:{
       deviceId: deviceId?{exact:deviceId}:undefined,
       facingMode: deviceId?undefined:{ideal:lockBack.checked?"environment":"user"},
-      width:{ideal:1280}, height:{ideal:720}
+      width:{ideal:idealW}, height:{ideal:idealH}
     },
     audio:false
   });
@@ -420,7 +446,7 @@ selCam.onchange=async()=>{
   localStorage.setItem(LS.cam, selCam.value||"");
   if(!stream) return;
   stopCamera();
-  await new Promise(r=>setTimeout(r,200));
+  await new Promise(r=>setTimeout(r,250));
   btnStart.onclick();
 };
 
@@ -620,7 +646,7 @@ function recognizeDigits(bw,w,h,nDigits,decimalMode,segOnThr,blob){
   const debugBoxes=[];
   if(segs.length<nDigits) return recognizeByEqualSplit(bw,w,h,x0,y0,ww,hh,nDigits,decimalMode,segOnThr,debugBoxes);
   if(segs.length>nDigits){
-    segs.sort((s1,s2)=>(s2.b-s1.a)-(s1.b-s1.a));
+    segs.sort((s1,s2)=>(s2.b-s2.a)-(s1.b-s1.a));
     segs=segs.slice(0,nDigits);
     segs.sort((s1,s2)=>s1.a-s2.a);
   }
@@ -667,8 +693,8 @@ function recognizeDigits(bw,w,h,nDigits,decimalMode,segOnThr,blob){
 }
 
 // stabilizer / gate
-let lastCand=null, consec=0, stableText=null, stableConf=0, lastOkAt=0;
-function resetStabilizer(){ lastCand=null; consec=0; stableText=null; stableConf=0; lastOkAt=0; setLamp("off"); }
+let lastCand=null, consec=0, stableText=null, lastOkAt=0;
+function resetStabilizer(){ lastCand=null; consec=0; stableText=null; lastOkAt=0; setLamp("off"); }
 
 function toFixed1dp(text){
   if(!force1dpEl.checked || !text) return text;
@@ -739,7 +765,7 @@ function computeBW(gray,w,h){
   return bw;
 }
 
-// Tesseract worker (SSD)
+// ----------------- Tesseract (SSD) -----------------
 let tessWorker=null;
 let tessReady=false;
 let tessBusy=false;
@@ -747,80 +773,56 @@ let lastTessAt=0;
 
 function setTessState(msg){ tessStateEl.textContent = "tess: " + msg; }
 
-
-const tessLogEl = document.getElementById("tessLog");
-let _tessLog = [];
-function logLine(s){
-  const ts = new Date().toLocaleTimeString();
-  _tessLog.push(`[${ts}] ${s}`);
-  if(_tessLog.length>25) _tessLog=_tessLog.slice(-25);
-  if(tessLogEl) tessLogEl.textContent = _tessLog.join("\n");
-}
-// Tesseract logger
-let _lastTessStatus="";
-function logTess(m){
-  if(!m) return;
-  const st = m.status || "";
-  const prog = (typeof m.progress==="number") ? ` ${(m.progress*100).toFixed(0)}%` : "";
-  const line = `${st}${prog}`;
-  if(line && line!==_lastTessStatus){
-    _lastTessStatus=line;
-    logLine("tess: " + line);
-  }
-}
-// traineddata/worker/core などが取れているか軽くチェック（HEAD→ダメなら小さくGET）
-async function probeUrl(url){
-  // HEAD
-  try{
-    const r = await fetch(url, {method:"HEAD", cache:"no-store"});
-    if(r.ok) return {ok:true, status:r.status, len:r.headers.get("content-length")||""};
-    return {ok:false, status:r.status, len:r.headers.get("content-length")||""};
-  }catch(_){}
-  // Range GET (対応してないサーバもある)
-  try{
-    const r = await fetch(url, {method:"GET", headers: {"Range":"bytes=0-31"}, cache:"no-store"});
-    if(r.ok || r.status===206) return {ok:true, status:r.status, len:r.headers.get("content-length")||""};
-    return {ok:false, status:r.status, len:r.headers.get("content-length")||""};
-  }catch(e){
-    return {ok:false, status:"ERR", len:(e?.message||String(e))};
-  }
-}
-// ★ここが「ssd」モデル固定
 const TESS_LANG = "ssd";
+
+async function probeTraineddata(){
+  const langPathAbs = new URL("./tessdata/", location.href).href;
+  const trainedUrl = new URL(`${TESS_LANG}.traineddata`, langPathAbs).href;
+  try{
+    const r = await fetch(trainedUrl, {cache:"no-store"});
+    if(!r.ok){ probeEl.innerHTML = `probe: <span class="bad">NG</span> ${r.status} ${trainedUrl}`; return false; }
+    probeEl.innerHTML = `probe: <span class="ok">OK</span> ${r.status} ${trainedUrl}`;
+    return true;
+  }catch(e){
+    probeEl.innerHTML = `probe: <span class="bad">NG</span> ${(e&&e.message)||e}`;
+    return false;
+  }
+}
+
+async function killTesseract(){
+  try{ await tessWorker?.terminate?.(); }catch(_){}
+  tessWorker=null;
+  tessReady=false;
+  tessBusy=false;
+  setTessState("terminated");
+}
+btnKillTess.onclick=async()=>{ await killTesseract(); };
 
 async function initTesseract(){
   if(tessReady) return true;
   if(!window.Tesseract){ setTessState("Tesseract.js not loaded"); return false; }
+
+  // SSDは重い。まず traineddata が取れるか確認
+  const okProbe = await probeTraineddata();
+  if(!okProbe){ setTessState("traineddata not reachable"); return false; }
+
   setTessState("initializing… ("+TESS_LANG+")");
-  // --- preflight: traineddata / worker / core が取れるか確認 ---
-  const langPathAbs = new URL("./tessdata/", location.href).href;
-  const tdUrl = new URL(TESS_LANG + ".traineddata", langPathAbs).href;
-  logLine("traineddata url: " + tdUrl);
-  const td = await probeUrl(tdUrl);
-  logLine(`traineddata probe: ${td.ok?"OK":"NG"} (${td.status}) ${td.len}`);
-  if(!td.ok){
-    setTessState("failed: ssd.traineddata が見つからない/取得できない");
-    return false;
-  }
-  // --- preflight end ---
   try{
-    // 重要：
-    // - langPath は traineddata を置いたフォルダ
-    // - gzip:false は ".traineddata" を探す（trueだと ".traineddata.gz" を探す）
+    const langPathAbs = new URL("./tessdata/", location.href).href;
+
+    // iOS安定化：worker/core を明示 + blob URLを避ける
     tessWorker = await Tesseract.createWorker({
-      // iOS/Safariで相対パスがWorker内で崩れることがあるので、必ず絶対URLにする
       workerPath: "https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/worker.min.js",
       corePath:   "https://cdn.jsdelivr.net/npm/tesseract.js-core@5.1.1/tesseract-core.wasm.js",
-      langPath:   new URL("./tessdata/", location.href).href,
-      gzip: false,             // ssd.traineddata (非gz) を使う
-      workerBlobURL: false,    // 環境によってはBlob経由が不安定なのでOFF
-      logger: (m)=>{ logTess(m); }
+      langPath:   langPathAbs,
+      gzip: false,
+      workerBlobURL: false,
+      logger: (m)=>{ /* console.log(m) */ }
     });
+
     await tessWorker.load();
     await tessWorker.loadLanguage(TESS_LANG);
     await tessWorker.initialize(TESS_LANG);
-
-    // 数字+ドットだけに制限（誤認識減らす）
     await tessWorker.setParameters({
       tessedit_char_whitelist: "0123456789.",
       tessedit_pageseg_mode: Tesseract.PSM.SINGLE_WORD
@@ -832,8 +834,7 @@ async function initTesseract(){
   }catch(e){
     tessReady=false;
     setTessState("failed: " + (e?.message||e));
-    try{ await tessWorker?.terminate?.(); }catch(_){}
-    tessWorker=null;
+    await killTesseract();
     return false;
   }
 }
@@ -841,7 +842,7 @@ btnInitTess.onclick=async()=>{ await initTesseract(); };
 
 // build OCR canvas from BW (white bg, black segments)
 function buildOcrCanvasFromBW(bw,w,h){
-  const maxW=420;
+  const maxW = iosSafeEl.checked ? 260 : 420; // iOSで落ちにくくするため控えめ
   let tw=w, th=h;
   if(w>maxW){
     const s=maxW/w;
@@ -850,19 +851,19 @@ function buildOcrCanvasFromBW(bw,w,h){
   }
   ocrC.width=tw; ocrC.height=th;
 
-  const img = ctxOCR.createImageData(w,h);
+  tmpOCRSrc.width=w; tmpOCRSrc.height=h;
+  const img = ctxTmp.createImageData(w,h);
   const d=img.data;
   for(let i=0;i<bw.length;i++){
     const v = bw[i] ? 0 : 255;
     const p=i*4;
     d[p]=v; d[p+1]=v; d[p+2]=v; d[p+3]=255;
   }
-  const tmp=document.createElement("canvas");
-  tmp.width=w; tmp.height=h;
-  tmp.getContext("2d").putImageData(img,0,0);
+  ctxTmp.putImageData(img,0,0);
+
   ctxOCR.imageSmoothingEnabled = true;
   ctxOCR.clearRect(0,0,tw,th);
-  ctxOCR.drawImage(tmp,0,0,w,h,0,0,tw,th);
+  ctxOCR.drawImage(tmpOCRSrc,0,0,w,h,0,0,tw,th);
 }
 
 function cleanTessText(text){
@@ -900,7 +901,7 @@ async function tessRecognize(bw,w,h){
   if(tessBusy) return null;
 
   const now=performance.now();
-  const every=parseInt(tessEveryEl.value||"1200",10);
+  const every=parseInt(tessEveryEl.value||"2500",10);
   if(now - lastTessAt < every) return null;
 
   if(!tessReady){
@@ -922,6 +923,7 @@ async function tessRecognize(bw,w,h){
     tessBusy=false;
   }
 }
+// ---------------------------------------------------
 
 // loop
 let lastAnalyzeAt=0;
@@ -947,34 +949,44 @@ function loop(){
   }
   lastAnalyzeAt=now;
 
-  work.width=rw; work.height=rh;
-  ctxW.drawImage(video, rx, ry, rw, rh, 0, 0, rw, rh);
-  const img=ctxW.getImageData(0,0,rw,rh);
+  // 処理サイズを上限で縮小（iOS安定化）
+  const maxPW=parseInt(maxProcWEl.value||"420",10);
+  const scale = Math.min(1, maxPW / Math.max(1,rw));
+  const pw = Math.max(10, Math.round(rw*scale));
+  const ph = Math.max(10, Math.round(rh*scale));
+
+  work.width=pw; work.height=ph;
+  ctxW.drawImage(video, rx, ry, rw, rh, 0, 0, pw, ph);
+
+  const img=ctxW.getImageData(0,0,pw,ph);
   const d=img.data;
 
-  const gray=new Uint8Array(rw*rh);
+  const gray=new Uint8Array(pw*ph);
   for(let i=0,p=0;i<d.length;i+=4,p++){
     const r=d[i], g=d[i+1], b=d[i+2];
     gray[p]=(r*0.299 + g*0.587 + b*0.114)|0;
   }
 
-  const bw = computeBW(gray,rw,rh);
+  const bw = computeBW(gray,pw,ph);
 
-  const blob=findDenseBlobBBox(bw,rw,rh);
+  const blob=findDenseBlobBBox(bw,pw,ph);
   if(blob.ok){
+    // overlayに戻す時はスケールを戻す
+    const sx = blob.x/scale, sy=blob.y/scale, sw=blob.w/scale, sh=blob.h/scale;
     ctxO.strokeStyle='rgba(0,200,255,.95)'; ctxO.lineWidth=3;
-    ctxO.strokeRect(rx+blob.x+1, ry+blob.y+1, blob.w-2, blob.h-2);
+    ctxO.strokeRect(rx+sx+1, ry+sy+1, sw-2, sh-2);
   }
 
   const nd=parseInt(digitsEl.value,10);
   const decMode=decEl.value;
   const segThr=parseFloat(segThrEl.value);
-  const res=recognizeDigits(bw,rw,rh,nd,decMode,segThr,blob);
+  const res=recognizeDigits(bw,pw,ph,nd,decMode,segThr,blob);
 
   if(res.debugBoxes && res.debugBoxes.length){
     ctxO.strokeStyle='rgba(255,230,0,.95)'; ctxO.lineWidth=2;
     for(const b of res.debugBoxes){
-      ctxO.strokeRect(rx+b.x, ry+b.y, b.w, b.h);
+      const sx=b.x/scale, sy=b.y/scale, sw=b.w/scale, sh=b.h/scale;
+      ctxO.strokeRect(rx+sx, ry+sy, sw, sh);
     }
   }
 
@@ -991,12 +1003,12 @@ function loop(){
 
   if(!acceptable){
     if(failSince===null) failSince=now;
-    const after=parseInt(tessAfterFailEl.value||"700",10);
+    const after=parseInt(tessAfterFailEl.value||"1600",10);
     if(tessOnEl.checked && (now - failSince) >= after){
-      tessRecognize(bw,rw,rh).then(tessText=>{
+      tessRecognize(bw,pw,ph).then(tessText=>{
         if(!tessText) return;
         if(!passesGate(tessText)) return;
-        stableText=tessText; stableConf=0.90; lastOkAt=performance.now();
+        stableText=tessText; lastOkAt=performance.now();
         outEl.textContent=stableText;
         setLamp("cyan");
       });
@@ -1011,10 +1023,10 @@ function loop(){
     else { lastCand=candidate; consec=1; }
 
     if(!stabilizeEl.checked){
-      stableText=candidate; stableConf=conf; outEl.textContent=stableText; setLamp("green");
+      stableText=candidate; outEl.textContent=stableText; setLamp("green");
     }else{
       if(consec >= needFrames){
-        stableText=candidate; stableConf=conf; outEl.textContent=stableText; setLamp("green");
+        stableText=candidate; outEl.textContent=stableText; setLamp("green");
       }else{
         if(!holdEl.checked) outEl.textContent="—";
         else if(stableText) outEl.textContent=stableText;
@@ -1036,7 +1048,7 @@ function loop(){
 
   const camLabel = selCam.selectedOptions?.[0]?.textContent || "";
   dbgEl.textContent =
-    `thr=${thrModeEl.value} inv=${invertEl.checked?1:0} dil=${dilateEl.checked?1:0} segThr=${segThr.toFixed(2)} | ` +
+    `proc=${pw}x${ph} scale=${scale.toFixed(2)} | thr=${thrModeEl.value} inv=${invertEl.checked?1:0} dil=${dilateEl.checked?1:0} segThr=${segThr.toFixed(2)} | ` +
     `stable=${stabilizeEl.checked?1:0} consec=${consec}/${needFrames} conf=${conf.toFixed(2)} needConf=${needConf.toFixed(2)} grace=${graceMs}ms gate=${gateOnEl.checked?1:0} | ` +
     `tess=${tessOnEl.checked?1:0} ready=${tessReady?1:0} busy=${tessBusy?1:0} lang=${TESS_LANG} | cam="${camLabel}"`;
 
@@ -1047,6 +1059,7 @@ function loop(){
 navigator.mediaDevices?.addEventListener?.('devicechange', ()=>listCams({preserve:true,autoPickBack:true}));
 listCams({preserve:true,autoPickBack:true}).catch(()=>{});
 setRoiBox(); syncLabels();
+probeTraineddata().catch(()=>{});
 </script>
 </body>
 </html>
