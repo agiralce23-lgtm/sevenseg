@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>7セグ読み取り v18（7窓のみ・学習モデルなし）</title>
+<title>7セグ読み取り v19（7窓のみ・横断窓）</title>
 <style>
   body{font-family:system-ui,-apple-system,sans-serif;margin:0;background:#111;color:#eee}
   .wrap{max-width:1100px;margin:0 auto;padding:10px;display:flex;flex-direction:column;gap:10px}
@@ -87,6 +87,8 @@
       <span class="chip">Otsuオフセット <input id="otsuOff" class="smallinp" type="number" step="1" value="-15"></span>
       <span class="chip"><input id="dilate" type="checkbox" checked>太らせる（細いセグ対策）</span>
       <span class="chip">太さ <input id="dilateN" class="smallinp" type="number" min="1" max="3" value="1"></span>
+      <span class="chip">窓サイズ倍率 <input id="winScale" type="range" min="0.60" max="1.80" step="0.05" value="1.00" style="width:140px"></span>
+      <span id="winScaleVal" class="mono">1.00</span>
     </div>
     <div class="kv"><label>セグ判定しきい値（黒率）</label><input id="segThr" type="range" min="0.10" max="0.60" step="0.01" value="0.28"><span id="segThrVal"></span></div>
     <div class="kv"><label>空白判定（全体黒率）</label><input id="blankThr" type="range" min="0.00" max="0.10" step="0.005" value="0.02"><span id="blankThrVal"></span></div>
@@ -145,6 +147,7 @@ const gxv=$("gxv"), gyv=$("gyv"), gwv=$("gwv"), ghv=$("ghv");
 const btnGuideReset=$("btnGuideReset"), showWindows=$("showWindows"), showDigitBoxes=$("showDigitBoxes");
 
 const invertEl=$("invert"), autoOtsu=$("autoOtsu"), otsuOff=$("otsuOff"), dilate=$("dilate"), dilateN=$("dilateN");
+const winScale=$("winScale"), winScaleVal=$("winScaleVal");
 const segThr=$("segThr"), segThrVal=$("segThrVal"), blankThr=$("blankThr"), blankThrVal=$("blankThrVal");
 
 const needFrames=$("needFrames"), needFramesVal=$("needFramesVal"), graceMs=$("graceMs"), graceMsVal=$("graceMsVal");
@@ -166,6 +169,7 @@ const LS={
   otsuOff:"sevenseg_otsuOff_v18",
   dil:"sevenseg_dil_v18",
   diln:"sevenseg_diln_v18",
+  wins:"sevenseg_winscale_v19",
   seg:"sevenseg_segthr_v18",
   blank:"sevenseg_blankthr_v18",
   nf:"sevenseg_needframes_v18",
@@ -188,6 +192,7 @@ function setLamp(state){
 }
 function syncLabels(){
   anMsVal.textContent=String(anMs.value);
+  winScaleVal.textContent=Number(winScale.value).toFixed(2);
   segThrVal.textContent=Number(segThr.value).toFixed(2);
   blankThrVal.textContent=Number(blankThr.value).toFixed(3);
   needFramesVal.textContent=String(needFrames.value);
@@ -227,6 +232,7 @@ function restore(){
   otsuOff.value=(localStorage.getItem(LS.otsuOff)??"-15");
   dilate.checked=(localStorage.getItem(LS.dil)??"1")==="1";
   dilateN.value=(localStorage.getItem(LS.diln)??"1");
+  winScale.value=(localStorage.getItem(LS.wins)??"1.00");
   segThr.value=(localStorage.getItem(LS.seg)??"0.28");
   blankThr.value=(localStorage.getItem(LS.blank)??"0.02");
 
@@ -257,6 +263,7 @@ function persist(){
   otsuOff.onchange=()=>localStorage.setItem(LS.otsuOff, otsuOff.value);
   dilate.onchange=()=>localStorage.setItem(LS.dil, dilate.checked?"1":"0");
   dilateN.onchange=()=>localStorage.setItem(LS.diln, dilateN.value);
+  winScale.oninput=()=>{localStorage.setItem(LS.wins, winScale.value); syncLabels();}
   segThr.oninput=()=>{localStorage.setItem(LS.seg, segThr.value); syncLabels();}
   blankThr.oninput=()=>{localStorage.setItem(LS.blank, blankThr.value); syncLabels();}
 
@@ -488,26 +495,51 @@ function guideRect(){
 
 // ====== 7窓（1桁内の相対位置） ======
 function segWindowsForDigit(dx,dy,dw,dh){
-  const th = 0.16;
-  const vw = 0.18;
-  const pad = 0.08;
-  const mid = 0.50;
+  // 「セグに沿う」窓ではなく、「セグを横断する」窓（断面）で黒率判定する
+  // - 水平セグ(a,g,d) → 垂直の細長い窓で横断
+  // - 垂直セグ(f,b,e,c) → 水平の細長い窓で横断
+  const s = Math.max(0.60, Math.min(1.80, parseFloat(winScale?.value ?? "1.0")));
 
   const x0=dx, y0=dy, x1=dx+dw, y1=dy+dh;
-  const px = dw*pad, py = dh*pad;
 
-  const hh = dh*th;
-  const ww = dw*vw;
+  // 中心座標（7セグ表示の一般的な比率）
+  const cx = x0 + dw*0.50;
 
-  const a = {x: x0+px, y: y0+py, w: dw-2*px, h: hh};
-  const d = {x: x0+px, y: y1-py-hh, w: dw-2*px, h: hh};
-  const g = {x: x0+px, y: y0 + dh*mid - hh/2, w: dw-2*px, h: hh};
+  const yA = y0 + dh*0.18;
+  const yG = y0 + dh*0.50;
+  const yD = y0 + dh*0.82;
 
-  const f = {x: x0+px, y: y0+py, w: ww, h: dh*0.45};
-  const e = {x: x0+px, y: y0+dh*0.55, w: ww, h: dh*0.45-py};
+  const xL = x0 + dw*0.26;
+  const xR = x0 + dw*0.74;
 
-  const b = {x: x1-px-ww, y: y0+py, w: ww, h: dh*0.45};
-  const c = {x: x1-px-ww, y: y0+dh*0.55, w: ww, h: dh*0.45-py};
+  const yU = y0 + dh*0.35;
+  const yL = y0 + dh*0.65;
+
+  // 窓サイズ（倍率で調整）
+  // 水平セグを横断する窓：縦長（幅は小さめ、高さはセグ厚みを跨ぐ程度）
+  const wH = dw*0.22*s;
+  const hH = dh*0.18*s;
+
+  // 垂直セグを横断する窓：横長
+  const wV = dw*0.26*s;
+  const hV = dh*0.16*s;
+
+  function rect(cx,cy,w,h){
+    let x=cx-w/2, y=cy-h/2;
+    // digit内に収める
+    x = Math.max(x0, Math.min(x, x1-w));
+    y = Math.max(y0, Math.min(y, y1-h));
+    return {x,y,w,h};
+  }
+
+  const a = rect(cx, yA, wH, hH);
+  const g = rect(cx, yG, wH, hH);
+  const d = rect(cx, yD, wH, hH);
+
+  const f = rect(xL, yU, wV, hV);
+  const b = rect(xR, yU, wV, hV);
+  const e = rect(xL, yL, wV, hV);
+  const c = rect(xR, yL, wV, hV);
 
   return {a,b,c,d,e,f,g};
 }
@@ -620,7 +652,7 @@ function applyCandidate(candidate, conf, thr, debug){
 
   const camLabel = selCam.selectedOptions?.[0]?.textContent || "";
   dbg.textContent =
-    `mode=7windows | digits=${digitsEl.value} inv=${invertEl.checked?1:0} otsu=${autoOtsu.checked?1:0} off=${otsuOff.value} `+
+    `mode=7windows | digits=${digitsEl.value} inv=${invertEl.checked?1:0} otsu=${autoOtsu.checked?1:0} off=${otsuOff.value} win=${Number(winScale.value).toFixed(2)} `+
     `dil=${dilate.checked?1:0} n=${dilateN.value} segThr=${Number(segThr.value).toFixed(2)} blankThr=${Number(blankThr.value).toFixed(3)} | `+
     `stable=${stabilizeEl.checked?1:0} consec=${consec}/${need} grace=${grace}ms | cam="${camLabel}"
 `+
