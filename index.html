@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>7セグ認識 Webアプリ v12（iOS安定化 / Tesseract SSD任意）</title>
+<title>7セグ認識 Webアプリ v14（学習モデル: TFJS / OCRなし）</title>
 <style>
   body{font-family:system-ui,-apple-system,sans-serif;margin:0;background:#111;color:#eee}
   .wrap{display:flex;flex-direction:column;gap:10px;padding:10px;max-width:1100px;margin:0 auto}
@@ -11,8 +11,7 @@
   button,select,input{font-size:16px;padding:8px 10px}
   .stage{position:relative;width:100%;aspect-ratio:16/9;background:#000;overflow:hidden;border-radius:10px}
   video,canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
-  .roi{position:absolute;border:2px solid rgba(255,0,0,.9);box-shadow:0 0,0 9999px rgba(0,0,0,.35);border-radius:8px;pointer-events:none}
-  .roi{box-shadow:0 0 0 9999px rgba(0,0,0,.35)}
+  .roi{position:absolute;border:2px solid rgba(255,0,0,.9);box-shadow:0 0 0 9999px rgba(0,0,0,.35);border-radius:8px;pointer-events:none}
   .panel{background:#1b1b1b;padding:10px;border-radius:10px}
   .k{color:#9ad}
   .big{font-size:36px;font-weight:900;letter-spacing:.5px;display:flex;align-items:center;gap:10px}
@@ -33,18 +32,16 @@
   .lamp.cyan{background:#33d6ff}
   .btn{background:#2a2a2a;border:1px solid #3a3a3a;color:#fff;border-radius:10px}
   .btn:active{transform:translateY(1px)}
-  .smallinp{width:86px;padding:6px 8px;border-radius:8px;border:1px solid #333;background:#101010;color:#fff}
+  .smallinp{width:96px;padding:6px 8px;border-radius:8px;border:1px solid #333;background:#101010;color:#fff}
   .warn{color:#ffdf8a}
-  .ok{color:#b8ffb8}
-  .bad{color:#ffb8b8}
 </style>
 
-<!-- Tesseract.js（CDN） -->
-<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<!-- TensorFlow.js -->
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-wasm@4.20.0/dist/tf-backend-wasm.min.js"></script>
 </head>
 <body>
 <div class="wrap">
-
   <div class="row">
     <button id="btnStart" class="btn">カメラ開始</button>
     <button id="btnStop" class="btn" disabled>停止</button>
@@ -53,22 +50,13 @@
     <select id="selCam"></select>
 
     <span class="chip"><input id="lockBack" type="checkbox" checked>背面固定</span>
-    <span class="chip"><input id="invert" type="checkbox" checked>反転（黒い数字用）</span>
-    <span class="chip"><input id="dilate" type="checkbox">太らせる</span>
 
-    <label>2値化</label>
-    <select id="thrMode">
-      <option value="otsu">自動（Otsu）</option>
-      <option value="adaptive" selected>局所（平均±C）</option>
-      <option value="manual">手動T</option>
-    </select>
+    <span class="chip"><input id="useML" type="checkbox" checked>学習モデル使用</span>
+    <button id="btnLoadModel" class="btn" type="button">モデル読込</button>
 
-    <label>オフセット/C</label>
-    <input id="thrOff" type="range" min="-80" max="80" value="10">
-    <span id="thrOffVal">10</span>
-
-    <label>使用T</label>
-    <span id="thrUsed" class="mono">—</span>
+    <label>推論間隔(ms)</label>
+    <input id="anMs" type="range" min="60" max="300" step="10" value="120">
+    <span id="anMsVal" class="mono">120</span>
 
     <label>桁</label>
     <select id="digits">
@@ -78,56 +66,30 @@
 
     <label>小数点</label>
     <select id="decimal">
-      <option value="auto" selected>自動（ドット検出）</option>
-      <option value="last">最後の1桁前（xxx.x）</option>
+      <option value="last" selected>最後の1桁前（xxx.x）</option>
       <option value="none">なし</option>
     </select>
 
-    <label>セグ判定</label>
-    <input id="segThr" type="range" min="0.18" max="0.65" step="0.01" value="0.34">
-    <span id="segThrVal">0.34</span>
+    <span class="chip"><input id="stabilize" type="checkbox" checked>ちらつき防止</span>
+    <span class="chip"><input id="hold" type="checkbox" checked>確定値ホールド</span>
   </div>
 
   <details open>
-    <summary>iOS 安定化（落ちにくい設定） + ゲート + Tesseract補助（SSD 任意）</summary>
-
-    <div class="row" style="margin-top:8px">
-      <span class="chip"><input id="iosSafe" type="checkbox" checked>iOSセーフモード（軽量）</span>
-      <span class="chip"><input id="thrSmooth" type="checkbox" checked>使用Tを平滑化</span>
-      <span class="chip"><input id="stabilize" type="checkbox" checked>ちらつき防止</span>
-      <span class="chip"><input id="hold" type="checkbox" checked>確定値ホールド</span>
-      <span class="chip"><input id="gateOn" type="checkbox" checked>誤認識ゲート</span>
-      <span class="chip"><input id="force1dp" type="checkbox" checked>小数1桁に揃える</span>
-      <span class="chip"><input id="tessOn" type="checkbox">Tesseract補助（ssd）※重い</span>
-    </div>
-
-    <div class="kv"><label>T平滑化係数（0〜0.95）</label><input id="smoothA" type="range" min="0" max="0.95" step="0.05" value="0.75"><span id="smoothAval"></span></div>
+    <summary>安定化（確定表示）</summary>
     <div class="kv"><label>確定に必要な連続フレーム</label><input id="needFrames" type="range" min="1" max="20" step="1" value="6"><span id="needFramesVal"></span></div>
-    <div class="kv"><label>確定に必要な信頼度</label><input id="needConf" type="range" min="0.30" max="0.95" step="0.01" value="0.55"><span id="needConfVal"></span></div>
-    <div class="kv"><label>失敗許容（ms）</label><input id="graceMs" type="range" min="0" max="3000" step="50" value="900"><span id="graceMsVal"></span></div>
-    <div class="kv"><label>解析間隔（ms）</label><input id="anMs" type="range" min="60" max="400" step="10" value="140"><span id="anMsVal"></span></div>
+    <div class="kv"><label>確定に必要な信頼度</label><input id="needConf" type="range" min="0.30" max="0.99" step="0.01" value="0.70"><span id="needConfVal"></span></div>
+    <div class="kv"><label>失敗許容（ms）</label><input id="graceMs" type="range" min="0" max="2500" step="50" value="800"><span id="graceMsVal"></span></div>
 
     <div class="row" style="margin-top:8px">
-      <span class="chip">最小桁数 <input id="minDigits" class="smallinp" type="number" min="1" max="6" step="1" value="3"></span>
       <span class="chip">範囲 <input id="minVal" class="smallinp" type="number" step="0.1" value="10"> ～ <input id="maxVal" class="smallinp" type="number" step="0.1" value="250"></span>
-      <span class="chip">局所窓 <input id="adWin" class="smallinp" type="number" min="7" max="61" step="2" value="21"></span>
-      <span class="chip">処理サイズ上限W <input id="maxProcW" class="smallinp" type="number" min="200" max="900" step="10" value="420"></span>
-    </div>
-
-    <div class="row" style="margin-top:8px">
-      <span class="chip">Tesseract間隔(ms) <input id="tessEvery" class="smallinp" type="number" min="800" max="8000" step="100" value="2500"></span>
-      <span class="chip">失敗が続いたら起動(ms) <input id="tessAfterFail" class="smallinp" type="number" min="400" max="8000" step="100" value="1600"></span>
-      <button id="btnInitTess" class="btn" type="button">Tesseract初期化</button>
-      <button id="btnKillTess" class="btn" type="button">Tesseract停止（解放）</button>
+      <span class="chip"><input id="force1dp" type="checkbox" checked>小数1桁に揃える</span>
+      <span class="chip"><input id="wasm" type="checkbox" checked>TFJS WASM（iPhone安定）</span>
     </div>
 
     <div class="hint warn" style="margin-top:8px">
-      iPhoneの「問題が繰り返し起きました」は<strong>メモリ/CPU過多でタブが落ちた</strong>可能性が高いです。<br>
-      まずは <b>iOSセーフモードON + Tesseract OFF</b> で安定させてから、必要ならTesseractをONにしてください。
+      この版は <b>OCR(Tesseract)なし</b>。学習モデル（TFJS）で「しきい値調整」を減らします。<br>
+      <b>モデルファイル</b>は同じフォルダに <span class="mono">model/model.json</span> と <span class="mono">model/*.bin</span> を置いてください（https配信推奨）。
     </div>
-
-    <div class="hint mono" id="probe" style="margin-top:6px">probe: —</div>
-    <div class="hint mono" id="tessState" style="margin-top:6px">tess: not initialized</div>
   </details>
 
   <details>
@@ -158,102 +120,58 @@
       <div class="row" style="margin-top:10px">
         <button id="btnCopy" class="btn" type="button">確定値をコピー</button>
       </div>
+      <div class="hint mono" id="mlState" style="margin-top:6px">ml: not loaded</div>
       <hr style="border:0;border-top:1px solid #333;margin:10px 0">
       <div class="hint">
-        ・緑＝確定（安定） / 黄＝未確定 / 水色＝Tesseract補助で確定<br>
-        ・Tesseract(SSD)は重いので、iPhoneでは「必要な時だけON」が安全です。
+        ・緑＝確定（安定） / 黄＝未確定<br>
+        ・学習モデルは「桁ごと」に分類します（0〜9、空白）。<br>
       </div>
     </div>
   </div>
 
   <canvas id="work" style="display:none"></canvas>
-  <canvas id="ocr" style="display:none"></canvas>
-  <canvas id="tmpOCRSrc" style="display:none"></canvas>
+  <canvas id="dig" style="display:none"></canvas>
 </div>
 
 <script>
 const $ = (id)=>document.getElementById(id);
 
-const video=$("video"), overlay=$("overlay"), work=$("work"), ocrC=$("ocr"), tmpOCRSrc=$("tmpOCRSrc");
+const video=$("video"), overlay=$("overlay"), work=$("work"), dig=$("dig");
 const ctxO = overlay.getContext('2d',{willReadFrequently:true});
 const ctxW = work.getContext('2d',{willReadFrequently:true});
-const ctxOCR = ocrC.getContext('2d',{willReadFrequently:true});
-const ctxTmp = tmpOCRSrc.getContext('2d',{willReadFrequently:true});
+const ctxD = dig.getContext('2d',{willReadFrequently:true});
 
 const btnStart=$("btnStart"), btnStop=$("btnStop"), selCam=$("selCam");
-const lockBack=$("lockBack"), invertEl=$("invert"), dilateEl=$("dilate");
+const lockBack=$("lockBack");
 
-const thrModeEl=$("thrMode"), thrOffEl=$("thrOff"), thrOffVal=$("thrOffVal"), thrUsedEl=$("thrUsed");
-const digitsEl=$("digits"), decEl=$("decimal"), segThrEl=$("segThr"), segThrVal=$("segThrVal");
+const useMLEl=$("useML"), btnLoadModel=$("btnLoadModel");
+const anMsEl=$("anMs"), anMsVal=$("anMsVal");
+const digitsEl=$("digits"), decEl=$("decimal");
 
-const iosSafeEl=$("iosSafe");
-const thrSmoothEl=$("thrSmooth"), smoothAEl=$("smoothA"), smoothAval=$("smoothAval");
-const stabilizeEl=$("stabilize"), holdEl=$("hold"), needFramesEl=$("needFrames"), needFramesVal=$("needFramesVal");
+const stabilizeEl=$("stabilize"), holdEl=$("hold");
+const needFramesEl=$("needFrames"), needFramesVal=$("needFramesVal");
 const needConfEl=$("needConf"), needConfVal=$("needConfVal");
 const graceMsEl=$("graceMs"), graceMsVal=$("graceMsVal");
-const anMsEl=$("anMs"), anMsVal=$("anMsVal");
-
-const gateOnEl=$("gateOn"), force1dpEl=$("force1dp"), minDigitsEl=$("minDigits"), minValEl=$("minVal"), maxValEl=$("maxVal"), adWinEl=$("adWin");
-const maxProcWEl=$("maxProcW");
-const tessOnEl=$("tessOn"), tessEveryEl=$("tessEvery"), tessAfterFailEl=$("tessAfterFail");
+const minValEl=$("minVal"), maxValEl=$("maxVal"), force1dpEl=$("force1dp");
+const wasmEl=$("wasm");
 
 const outEl=$("out"), candLine=$("candLine"), dbgEl=$("dbg"), roiEl=$("roi"), lampEl=$("lamp"), btnCopy=$("btnCopy");
+const mlStateEl=$("mlState");
 const roiX=$("roiX"), roiY=$("roiY"), roiW=$("roiW"), roiH=$("roiH");
 const roiXv=$("roiXv"), roiYv=$("roiYv"), roiWv=$("roiWv"), roiHv=$("roiHv");
 const btnRoiReset=$("btnRoiReset");
 
-const btnInitTess=$("btnInitTess");
-const btnKillTess=$("btnKillTess");
-const tessStateEl=$("tessState");
-const probeEl=$("probe");
-
 let stream=null, rafId=null;
 
-// localStorage keys
-const LS={
-  cam:"sevenseg_cam_deviceid",
-  lock:"sevenseg_lockback",
-  inv:"sevenseg_invert",
-  dil:"sevenseg_dilate",
-  thrMode:"sevenseg_thrMode",
-  off:"sevenseg_throff",
-  seg:"sevenseg_segthr",
-  roi:"sevenseg_roi_v12",
-  ios:"sevenseg_iossafe",
-  thrSmooth:"sevenseg_thrsmooth",
-  smoothA:"sevenseg_smootha",
-  stab:"sevenseg_stab",
-  hold:"sevenseg_hold",
-  nf:"sevenseg_needframes",
-  nc:"sevenseg_needconf",
-  gm:"sevenseg_gracems",
-  an:"sevenseg_anms",
-  gate:"sevenseg_gate",
-  force:"sevenseg_force1dp",
-  mind:"sevenseg_mindigits",
-  minv:"sevenseg_minval",
-  maxv:"sevenseg_maxval",
-  adw:"sevenseg_adwin",
-  maxpw:"sevenseg_maxProcW",
-  tessOn:"sevenseg_tessOn",
-  tessEvery:"sevenseg_tessEvery",
-  tessAfter:"sevenseg_tessAfter"
+const LS={ cam:"sevenseg_cam_deviceid", lock:"sevenseg_lockback", roi:"sevenseg_roi_v14",
+  useML:"sevenseg_useml", an:"sevenseg_anms", digits:"sevenseg_digits", dec:"sevenseg_dec",
+  stab:"sevenseg_stab", hold:"sevenseg_hold", nf:"sevenseg_needframes", nc:"sevenseg_needconf", gm:"sevenseg_gracems",
+  minv:"sevenseg_minval", maxv:"sevenseg_maxval", force:"sevenseg_force1dp", wasm:"sevenseg_wasm",
+  model:"sevenseg_model_url"
 };
 
 function clamp(v,a,b){return Math.max(a,Math.min(b,v))}
 function clamp01(v){return clamp(v,0,1)}
-
-const defaultRoi={x:0.18,y:0.44,w:0.64,h:0.18};
-let ROI=loadROI();
-function loadROI(){
-  try{
-    const s=localStorage.getItem(LS.roi); if(!s) return {...defaultRoi};
-    const o=JSON.parse(s);
-    return {x:clamp01(+o.x),y:clamp01(+o.y),w:clamp01(+o.w),h:clamp01(+o.h)};
-  }catch(_){return {...defaultRoi}}
-}
-function saveROI(){localStorage.setItem(LS.roi,JSON.stringify(ROI))}
-
 function setLamp(state){
   lampEl.classList.remove("green","yellow","cyan");
   if(state==="green") lampEl.classList.add("green");
@@ -270,14 +188,23 @@ function setRoiBox(){
 }
 window.addEventListener('resize', setRoiBox);
 
+// ROI
+const defaultRoi={x:0.18,y:0.44,w:0.64,h:0.18};
+let ROI=loadROI();
+function loadROI(){
+  try{
+    const s=localStorage.getItem(LS.roi); if(!s) return {...defaultRoi};
+    const o=JSON.parse(s);
+    return {x:clamp01(+o.x),y:clamp01(+o.y),w:clamp01(+o.w),h:clamp01(+o.h)};
+  }catch(_){return {...defaultRoi}}
+}
+function saveROI(){localStorage.setItem(LS.roi,JSON.stringify(ROI))}
+
 function syncLabels(){
-  segThrVal.textContent=Number(segThrEl.value).toFixed(2);
-  thrOffVal.textContent=String(thrOffEl.value);
-  smoothAval.textContent=Number(smoothAEl.value).toFixed(2);
+  anMsVal.textContent=String(anMsEl.value);
   needFramesVal.textContent=String(needFramesEl.value);
   needConfVal.textContent=Number(needConfEl.value).toFixed(2);
   graceMsVal.textContent=String(graceMsEl.value);
-  anMsVal.textContent=String(anMsEl.value);
 
   roiX.value=ROI.x; roiY.value=ROI.y; roiW.value=ROI.w; roiH.value=ROI.h;
   roiXv.textContent=ROI.x.toFixed(2);
@@ -298,70 +225,43 @@ function bindRoi(sl,key){
 bindRoi(roiX,"x"); bindRoi(roiY,"y"); bindRoi(roiW,"w"); bindRoi(roiH,"h");
 btnRoiReset.onclick=()=>{ ROI={...defaultRoi}; saveROI(); syncLabels(); setRoiBox(); };
 
+// settings restore
 function restore(){
   lockBack.checked=(localStorage.getItem(LS.lock)??"1")==="1";
-  invertEl.checked=(localStorage.getItem(LS.inv)??"1")==="1";
-  dilateEl.checked=(localStorage.getItem(LS.dil)??"0")==="1";
-  thrModeEl.value=(localStorage.getItem(LS.thrMode)??"adaptive");
-  thrOffEl.value=(localStorage.getItem(LS.off)??"10");
-  segThrEl.value=(localStorage.getItem(LS.seg)??"0.34");
-  iosSafeEl.checked=(localStorage.getItem(LS.ios)??"1")==="1";
+  selCam.value=localStorage.getItem(LS.cam)||"";
+  useMLEl.checked=(localStorage.getItem(LS.useML)??"1")==="1";
+  anMsEl.value=(localStorage.getItem(LS.an)??"120");
+  digitsEl.value=(localStorage.getItem(LS.digits)??"4");
+  decEl.value=(localStorage.getItem(LS.dec)??"last");
 
-  thrSmoothEl.checked=(localStorage.getItem(LS.thrSmooth)??"1")==="1";
-  smoothAEl.value=(localStorage.getItem(LS.smoothA)??"0.75");
   stabilizeEl.checked=(localStorage.getItem(LS.stab)??"1")==="1";
   holdEl.checked=(localStorage.getItem(LS.hold)??"1")==="1";
   needFramesEl.value=(localStorage.getItem(LS.nf)??"6");
-  needConfEl.value=(localStorage.getItem(LS.nc)??"0.55");
-  graceMsEl.value=(localStorage.getItem(LS.gm)??"900");
-  anMsEl.value=(localStorage.getItem(LS.an)??"140");
-
-  gateOnEl.checked=(localStorage.getItem(LS.gate)??"1")==="1";
-  force1dpEl.checked=(localStorage.getItem(LS.force)??"1")==="1";
-  minDigitsEl.value=(localStorage.getItem(LS.mind)??"3");
+  needConfEl.value=(localStorage.getItem(LS.nc)??"0.70");
+  graceMsEl.value=(localStorage.getItem(LS.gm)??"800");
   minValEl.value=(localStorage.getItem(LS.minv)??"10");
   maxValEl.value=(localStorage.getItem(LS.maxv)??"250");
-  adWinEl.value=(localStorage.getItem(LS.adw)??"21");
-  maxProcWEl.value=(localStorage.getItem(LS.maxpw)??"420");
-
-  tessOnEl.checked=(localStorage.getItem(LS.tessOn)??"0")==="1";
-  tessEveryEl.value=(localStorage.getItem(LS.tessEvery)??"2500");
-  tessAfterFailEl.value=(localStorage.getItem(LS.tessAfter)??"1600");
-
+  force1dpEl.checked=(localStorage.getItem(LS.force)??"1")==="1";
+  wasmEl.checked=(localStorage.getItem(LS.wasm)??"1")==="1";
   syncLabels();
 }
 restore();
 
 function persist(){
   lockBack.onchange=()=>localStorage.setItem(LS.lock, lockBack.checked?"1":"0");
-  invertEl.onchange=()=>localStorage.setItem(LS.inv, invertEl.checked?"1":"0");
-  dilateEl.onchange=()=>localStorage.setItem(LS.dil, dilateEl.checked?"1":"0");
-  thrModeEl.onchange=()=>localStorage.setItem(LS.thrMode, thrModeEl.value);
-  thrOffEl.oninput=()=>{localStorage.setItem(LS.off,thrOffEl.value); syncLabels();}
-  segThrEl.oninput=()=>{localStorage.setItem(LS.seg,segThrEl.value); syncLabels();}
-  iosSafeEl.onchange=()=>localStorage.setItem(LS.ios, iosSafeEl.checked?"1":"0");
-
-  thrSmoothEl.onchange=()=>localStorage.setItem(LS.thrSmooth, thrSmoothEl.checked?"1":"0");
-  smoothAEl.oninput=()=>{localStorage.setItem(LS.smoothA,smoothAEl.value); syncLabels();}
-
+  useMLEl.onchange=()=>localStorage.setItem(LS.useML, useMLEl.checked?"1":"0");
+  anMsEl.oninput=()=>{localStorage.setItem(LS.an,anMsEl.value); syncLabels();}
+  digitsEl.onchange=()=>localStorage.setItem(LS.digits,digitsEl.value);
+  decEl.onchange=()=>localStorage.setItem(LS.dec,decEl.value);
   stabilizeEl.onchange=()=>localStorage.setItem(LS.stab, stabilizeEl.checked?"1":"0");
   holdEl.onchange=()=>localStorage.setItem(LS.hold, holdEl.checked?"1":"0");
   needFramesEl.oninput=()=>{localStorage.setItem(LS.nf,needFramesEl.value); syncLabels();}
   needConfEl.oninput=()=>{localStorage.setItem(LS.nc,needConfEl.value); syncLabels();}
   graceMsEl.oninput=()=>{localStorage.setItem(LS.gm,graceMsEl.value); syncLabels();}
-  anMsEl.oninput=()=>{localStorage.setItem(LS.an,anMsEl.value); syncLabels();}
-
-  gateOnEl.onchange=()=>localStorage.setItem(LS.gate, gateOnEl.checked?"1":"0");
+  minValEl.onchange=()=>localStorage.setItem(LS.minv,minValEl.value);
+  maxValEl.onchange=()=>localStorage.setItem(LS.maxv,maxValEl.value);
   force1dpEl.onchange=()=>localStorage.setItem(LS.force, force1dpEl.checked?"1":"0");
-  minDigitsEl.onchange=()=>localStorage.setItem(LS.mind, minDigitsEl.value);
-  minValEl.onchange=()=>localStorage.setItem(LS.minv, minValEl.value);
-  maxValEl.onchange=()=>localStorage.setItem(LS.maxv, maxValEl.value);
-  adWinEl.onchange=()=>localStorage.setItem(LS.adw, adWinEl.value);
-  maxProcWEl.onchange=()=>localStorage.setItem(LS.maxpw, maxProcWEl.value);
-
-  tessOnEl.onchange=()=>localStorage.setItem(LS.tessOn, tessOnEl.checked?"1":"0");
-  tessEveryEl.onchange=()=>localStorage.setItem(LS.tessEvery, tessEveryEl.value);
-  tessAfterFailEl.onchange=()=>localStorage.setItem(LS.tessAfter, tessAfterFailEl.value);
+  wasmEl.onchange=()=>localStorage.setItem(LS.wasm, wasmEl.checked?"1":"0");
 }
 persist();
 
@@ -399,16 +299,11 @@ async function startCamera(){
   await listCams({preserve:true,autoPickBack:true});
 
   const deviceId=selCam.value||undefined;
-
-  // iOSセーフモード：解像度を抑える（メモリ削減）
-  const idealW = iosSafeEl.checked ? 640 : 1280;
-  const idealH = iosSafeEl.checked ? 480 : 720;
-
   stream=await navigator.mediaDevices.getUserMedia({
     video:{
       deviceId: deviceId?{exact:deviceId}:undefined,
       facingMode: deviceId?undefined:{ideal:lockBack.checked?"environment":"user"},
-      width:{ideal:idealW}, height:{ideal:idealH}
+      width:{ideal:1280}, height:{ideal:720}
     },
     audio:false
   });
@@ -434,7 +329,6 @@ function stopCamera(){
   btnStart.disabled=false;
   btnStop.disabled=true;
 
-  thrUsedEl.textContent="—";
   outEl.textContent="—";
   candLine.textContent="候補: —";
   dbgEl.textContent="";
@@ -446,274 +340,24 @@ selCam.onchange=async()=>{
   localStorage.setItem(LS.cam, selCam.value||"");
   if(!stream) return;
   stopCamera();
-  await new Promise(r=>setTimeout(r,250));
+  await new Promise(r=>setTimeout(r,200));
   btnStart.onclick();
 };
 
-// image ops
-function dilate3x3(src,w,h){
-  const dst=new Uint8Array(w*h);
-  for(let y=0;y<h;y++){
-    for(let x=0;x<w;x++){
-      let on=0;
-      for(let yy=Math.max(0,y-1); yy<=Math.min(h-1,y+1) && !on; yy++){
-        const base=yy*w;
-        for(let xx=Math.max(0,x-1); xx<=Math.min(w-1,x+1); xx++){
-          if(src[base+xx]){ on=1; break; }
-        }
-      }
-      dst[y*w+x]=on;
-    }
-  }
-  return dst;
-}
-function otsu(gray){
-  const hist=new Uint32Array(256);
-  for(let i=0;i<gray.length;i++) hist[gray[i]]++;
-  const total=gray.length; if(total===0) return 128;
-  let sum=0; for(let t=0;t<256;t++) sum += t*hist[t];
-  let sumB=0,wB=0,varMax=-1,thr=128;
-  for(let t=0;t<256;t++){
-    wB += hist[t]; if(wB===0) continue;
-    const wF=total-wB; if(wF===0) break;
-    sumB += t*hist[t];
-    const mB=sumB/wB;
-    const mF=(sum-sumB)/wF;
-    const v=wB*wF*(mB-mF)*(mB-mF);
-    if(v>varMax){ varMax=v; thr=t; }
-  }
-  return thr;
-}
-function integralImage(gray,w,h){
-  const ii=new Uint32Array((w+1)*(h+1));
-  for(let y=1;y<=h;y++){
-    let rowsum=0;
-    for(let x=1;x<=w;x++){
-      rowsum += gray[(y-1)*w+(x-1)];
-      ii[y*(w+1)+x] = ii[(y-1)*(w+1)+x] + rowsum;
-    }
-  }
-  return ii;
-}
-function boxMean(ii,w,h,x1,y1,x2,y2){
-  x1=Math.max(0,x1); y1=Math.max(0,y1); x2=Math.min(w-1,x2); y2=Math.min(h-1,y2);
-  const W=w+1;
-  const A=(y1)*W+(x1);
-  const B=(y1)*W+(x2+1);
-  const C=(y2+1)*W+(x1);
-  const D=(y2+1)*W+(x2+1);
-  const sum=ii[D]-ii[B]-ii[C]+ii[A];
-  const area=(x2-x1+1)*(y2-y1+1);
-  return sum/Math.max(1,area);
-}
-
-// blob bbox
-function bestSegmentBySum(arr,thr){
-  let best={ok:false,a:0,b:0,sum:0};
-  let a=-1,sum=0;
-  for(let i=0;i<arr.length;i++){
-    const on=arr[i]>=thr;
-    if(on){ if(a<0){a=i; sum=0;} sum+=arr[i]; }
-    else{ if(a>=0){ const b=i-1; if(sum>best.sum) best={ok:true,a,b,sum}; a=-1; } }
-  }
-  if(a>=0){ const b=arr.length-1; if(sum>best.sum) best={ok:true,a,b,sum}; }
-  return best;
-}
-function findDenseBlobBBox(bw,w,h){
-  const col=new Uint32Array(w);
-  const row=new Uint32Array(h);
-  for(let y=0;y<h;y++){
-    const base=y*w;
-    let rs=0;
-    for(let x=0;x<w;x++){
-      const v=bw[base+x];
-      col[x]+=v; rs+=v;
-    }
-    row[y]=rs;
-  }
-  let colMax=0,rowMax=0;
-  for(const v of col) if(v>colMax) colMax=v;
-  for(const v of row) if(v>rowMax) rowMax=v;
-  const colThr=Math.max(2,Math.floor(colMax*0.06));
-  const rowThr=Math.max(2,Math.floor(rowMax*0.10));
-  const xs=bestSegmentBySum(col,colThr);
-  const ys=bestSegmentBySum(row,rowThr);
-  if(!xs.ok||!ys.ok) return {ok:false,x:0,y:0,w,h};
-  const px=Math.max(1,Math.floor(w*0.03));
-  const py=Math.max(1,Math.floor(h*0.05));
-  const x1=Math.max(0,xs.a-px), x2=Math.min(w-1,xs.b+px);
-  const y1=Math.max(0,ys.a-py), y2=Math.min(h-1,ys.b+py);
-  const ww=x2-x1+1, hh=y2-y1+1;
-  if(ww<Math.floor(w*0.18)||hh<Math.floor(h*0.30)) return {ok:false,x:0,y:0,w,h};
-  return {ok:true,x:x1,y:y1,w:ww,h:hh};
-}
-
-// 7seg sampling
-function sampleWhiteRatio(bw,w,h,cx,cy,r){
-  let white=0,total=0;
-  const x1=Math.max(0,cx-r), x2=Math.min(w-1,cx+r);
-  const y1=Math.max(0,cy-r), y2=Math.min(h-1,cy+r);
-  for(let y=y1;y<=y2;y++){
-    const base=y*w;
-    for(let x=x1;x<=x2;x++){ total++; if(bw[base+x]) white++; }
-  }
-  return total?white/total:0;
-}
-function detectDotBetween(bw,w,h,boxes){
-  const real=boxes.filter(b=>!b.blank);
-  if(real.length<2) return null;
-  for(let i=0;i<real.length-1;i++){
-    const L=real[i], R=real[i+1];
-    const gapL=L.x+L.w, gapR=R.x, gapW=gapR-gapL;
-    if(gapW<=2) continue;
-    const cx=Math.floor(gapL+gapW*0.50);
-    const y1=Math.floor(L.y+L.h*0.70), y2=Math.floor(L.y+L.h*0.95);
-    const r=Math.max(1,Math.floor(Math.min(gapW,L.h)*0.10));
-    let white=0,total=0;
-    for(let y=Math.max(0,y1); y<=Math.min(h-1,y2); y++){
-      const base=y*w;
-      for(let x=Math.max(0,cx-r); x<=Math.min(w-1,cx+r); x++){ total++; if(bw[base+x]) white++; }
-    }
-    const ratio=total?white/total:0;
-    if(ratio>=0.08) return i+1;
-  }
-  return null;
-}
-function recognizeByEqualSplit(bw,w,h,x0,y0,ww,hh,nDigits,decimalMode,segOnThr,debugBoxes){
-  const digitW=ww/nDigits;
-  const samples={a:[0.50,0.18],b:[0.82,0.35],c:[0.82,0.72],d:[0.50,0.88],e:[0.18,0.72],f:[0.18,0.35],g:[0.50,0.53]};
-  const map={"1111110":"0","0110000":"1","1101101":"2","1111001":"3","0110011":"4","1011011":"5","1011111":"6","1110000":"7","1111111":"8","1111011":"9","0000000":""};
-  let digits=[], confSum=0;
-  for(let i=0;i<nDigits;i++){
-    const dx=Math.floor(x0+i*digitW);
-    const dw=Math.max(3,Math.floor(digitW));
-    const rad=Math.max(1,Math.floor(Math.min(dw,hh)*0.018));
-    debugBoxes.push({x:dx,y:y0,w:dw,h:hh});
-    let bits="", local=0;
-    for(const k of ["a","b","c","d","e","f","g"]){
-      const [rx,ry]=samples[k];
-      const sx=Math.floor(dx+rx*dw);
-      const sy=Math.floor(y0+ry*hh);
-      const ratio=sampleWhiteRatio(bw,w,h,sx,sy,rad);
-      bits += (ratio>=segOnThr)?"1":"0";
-      local += Math.min(1, Math.abs(ratio-segOnThr)/Math.max(0.18,(1-segOnThr)));
-    }
-    local/=7;
-    const d=map[bits];
-    digits.push(d!==undefined?d:"");
-    confSum += local;
-  }
-  const raw=digits.join("");
-  let s=raw;
-  if(decimalMode==="last"){
-    if(s.length>=2) s=s.slice(0,-1)+"."+s.slice(-1);
-  }else if(decimalMode==="auto"){
-    const dotIdx=detectDotBetween(bw,w,h,debugBoxes.map(b=>({blank:false,...b})));
-    if(dotIdx!==null){
-      s=raw.slice(0,dotIdx)+"."+raw.slice(dotIdx);
-      s=s.replace(/^\./,"");
-    }else{
-      if(raw.length>=3) s=raw.slice(0,-1)+"."+raw.slice(-1);
-    }
-  }
-  const ok=/^[0-9]+(\.[0-9]+)?$/.test(s);
-  return {text: ok?s:null, conf: confSum/nDigits, debug: ok?"eqSplit":"unmatched(eq)", debugBoxes};
-}
-function recognizeDigits(bw,w,h,nDigits,decimalMode,segOnThr,blob){
-  const bx=blob?.ok?blob.x:0, by=blob?.ok?blob.y:0, bwid=blob?.ok?blob.w:w, bhgt=blob?.ok?blob.h:h;
-  const padX=Math.max(1,Math.floor(bwid*0.02));
-  const padY=Math.max(1,Math.floor(bhgt*0.06));
-  const x0=bx+padX, y0=by+padY;
-  const ww=Math.max(1,bwid-padX*2), hh=Math.max(1,bhgt-padY*2);
-
-  const col=new Uint32Array(ww);
-  for(let y=y0; y<y0+hh; y++){
-    const base=y*w;
-    for(let x=0;x<ww;x++) col[x]+=bw[base+(x0+x)];
-  }
-  let colMax=0; for(const v of col) if(v>colMax) colMax=v;
-  const cutThr=Math.max(1,Math.floor(colMax*0.10));
-  let segs=[], a=-1;
-  for(let x=0;x<ww;x++){
-    const on=col[x]>=cutThr;
-    if(on&&a<0) a=x;
-    if(!on&&a>=0){ segs.push({a,b:x-1}); a=-1; }
-  }
-  if(a>=0) segs.push({a,b:ww-1});
-  const minW=Math.max(1,Math.floor(ww*0.010));
-  segs=segs.filter(s=>(s.b-s.a+1)>=minW);
-
-  const debugBoxes=[];
-  if(segs.length<nDigits) return recognizeByEqualSplit(bw,w,h,x0,y0,ww,hh,nDigits,decimalMode,segOnThr,debugBoxes);
-  if(segs.length>nDigits){
-    segs.sort((s1,s2)=>(s2.b-s2.a)-(s1.b-s1.a));
-    segs=segs.slice(0,nDigits);
-    segs.sort((s1,s2)=>s1.a-s2.a);
-  }
-  const boxes=segs.map(s=>({blank:false,x:x0+s.a,y:y0,w:(s.b-s.a+1),h:hh}));
-
-  const samples={a:[0.50,0.18],b:[0.82,0.35],c:[0.82,0.72],d:[0.50,0.88],e:[0.18,0.72],f:[0.18,0.35],g:[0.50,0.53]};
-  const map={"1111110":"0","0110000":"1","1101101":"2","1111001":"3","0110011":"4","1011011":"5","1011111":"6","1110000":"7","1111111":"8","1111011":"9","0000000":""};
-
-  let digits=[], confSum=0;
-  for(const b of boxes){
-    debugBoxes.push({x:b.x,y:b.y,w:b.w,h:b.h});
-    const dw=Math.max(3,b.w), dh=Math.max(3,b.h);
-    const rad=Math.max(1,Math.floor(Math.min(dw,dh)*0.018));
-    let bits="", local=0;
-    for(const k of ["a","b","c","d","e","f","g"]){
-      const [rx,ry]=samples[k];
-      const sx=Math.floor(b.x+rx*dw);
-      const sy=Math.floor(b.y+ry*dh);
-      const ratio=sampleWhiteRatio(bw,w,h,sx,sy,rad);
-      bits += (ratio>=segOnThr)?"1":"0";
-      local += Math.min(1, Math.abs(ratio-segOnThr)/Math.max(0.18,(1-segOnThr)));
-    }
-    local/=7;
-    const d=(map[bits]!==undefined)?map[bits]:"";
-    digits.push(d);
-    confSum += local;
-  }
-
-  const raw=digits.join("");
-  let s=raw;
-  if(decimalMode==="last"){
-    if(s.length>=2) s=s.slice(0,-1)+"."+s.slice(-1);
-  }else if(decimalMode==="auto"){
-    const dotIdx=detectDotBetween(bw,w,h,boxes);
-    if(dotIdx!==null){
-      s=raw.slice(0,dotIdx)+"."+raw.slice(dotIdx);
-      s=s.replace(/^\./,"");
-    }else{
-      if(raw.length>=3) s=raw.slice(0,-1)+"."+raw.slice(-1);
-    }
-  }
-  const ok=/^[0-9]+(\.[0-9]+)?$/.test(s);
-  return {text: ok?s:null, conf: confSum/Math.max(1,boxes.length), debug: ok?"ok":"unmatched", debugBoxes};
-}
-
-// stabilizer / gate
-let lastCand=null, consec=0, stableText=null, lastOkAt=0;
-function resetStabilizer(){ lastCand=null; consec=0; stableText=null; lastOkAt=0; setLamp("off"); }
-
+// helpers
 function toFixed1dp(text){
   if(!force1dpEl.checked || !text) return text;
   if(text.includes(".")) return text;
   return text + ".0";
 }
 function passesGate(text){
-  if(!gateOnEl.checked) return true;
   if(!text) return false;
-  const digitsOnly=text.replace(".","");
-  const minD=parseInt(minDigitsEl.value||"3",10);
-  if(digitsOnly.length<minD) return false;
   const v=parseFloat(text);
   const minV=parseFloat(minValEl.value||"0"), maxV=parseFloat(maxValEl.value||"9999");
   if(Number.isNaN(v)) return false;
   if(v<minV || v>maxV) return false;
   return true;
 }
-
 btnCopy.onclick=async()=>{
   const t=stableText||outEl.textContent;
   if(!t||t==="—") return;
@@ -721,213 +365,127 @@ btnCopy.onclick=async()=>{
   catch(_){ prompt("コピーして使ってください:", t); }
 };
 
-// threshold smoothing
-let T_sm=null;
+// ===== ML model (digit classifier) =====
+// 想定: modelは (H,W,1) → 11クラス [0..9, blank] のsoftmax
+let model=null;
+let modelReady=false;
 
-function computeBW(gray,w,h){
-  const inv=invertEl.checked;
-  const mode=thrModeEl.value;
-  const off=parseInt(thrOffEl.value,10);
-  let bw=new Uint8Array(w*h);
-
-  if(mode==="adaptive"){
-    const win = clamp(parseInt(adWinEl.value||"21",10), 7, 61) | 0;
-    const half = Math.floor(win/2);
-    const ii = integralImage(gray,w,h);
-    for(let y=0;y<h;y++){
-      for(let x=0;x<w;x++){
-        const mean = boxMean(ii,w,h,x-half,y-half,x+half,y+half);
-        const thr = clamp(mean + off, 0, 255);
-        const g = gray[y*w+x];
-        const on = inv ? (g < thr) : (g > thr);
-        bw[y*w+x] = on?1:0;
-      }
-    }
-    thrUsedEl.textContent="local";
-  }else{
-    let T = (mode==="otsu") ? otsu(gray) : 110;
-    T = clamp(T + off, 0, 255);
-    if(thrSmoothEl.checked){
-      const a=parseFloat(smoothAEl.value);
-      if(T_sm===null) T_sm=T;
-      T_sm = a*T_sm + (1-a)*T;
-      T = Math.round(T_sm);
+async function initTF(){
+  try{
+    if(wasmEl.checked){
+      // wasm backend for iOS stability
+      const wasmPath = "https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-wasm@4.20.0/dist/";
+      tf.wasm.setWasmPaths(wasmPath);
+      await tf.setBackend("wasm");
     }else{
-      T_sm=null;
+      await tf.setBackend("webgl");
     }
-    thrUsedEl.textContent=String(T);
-    for(let i=0;i<gray.length;i++){
-      const on = inv ? (gray[i] < T) : (gray[i] > T);
-      bw[i]=on?1:0;
-    }
-  }
-  if(dilateEl.checked) bw=dilate3x3(bw,w,h);
-  return bw;
-}
-
-// ----------------- Tesseract (SSD) -----------------
-let tessWorker=null;
-let tessReady=false;
-let tessBusy=false;
-let lastTessAt=0;
-
-function setTessState(msg){ tessStateEl.textContent = "tess: " + msg; }
-
-const TESS_LANG = "ssd";
-
-async function probeTraineddata(){
-  const langPathAbs = new URL("./tessdata/", location.href).href;
-  const trainedUrl = new URL(`${TESS_LANG}.traineddata`, langPathAbs).href;
-  try{
-    const r = await fetch(trainedUrl, {cache:"no-store"});
-    if(!r.ok){ probeEl.innerHTML = `probe: <span class="bad">NG</span> ${r.status} ${trainedUrl}`; return false; }
-    probeEl.innerHTML = `probe: <span class="ok">OK</span> ${r.status} ${trainedUrl}`;
+    await tf.ready();
     return true;
   }catch(e){
-    probeEl.innerHTML = `probe: <span class="bad">NG</span> ${(e&&e.message)||e}`;
+    console.log(e);
     return false;
   }
 }
-
-async function killTesseract(){
-  try{ await tessWorker?.terminate?.(); }catch(_){}
-  tessWorker=null;
-  tessReady=false;
-  tessBusy=false;
-  setTessState("terminated");
-}
-btnKillTess.onclick=async()=>{ await killTesseract(); };
-
-async function initTesseract(){
-  if(tessReady) return true;
-  if(!window.Tesseract){ setTessState("Tesseract.js not loaded"); return false; }
-
-  // SSDは重い。まず traineddata が取れるか確認
-  const okProbe = await probeTraineddata();
-  if(!okProbe){ setTessState("traineddata not reachable"); return false; }
-
-  setTessState("initializing… ("+TESS_LANG+")");
+async function loadModel(url){
+  mlStateEl.textContent="ml: loading…";
+  const ok = await initTF();
+  if(!ok){ mlStateEl.textContent="ml: tf init failed"; return false; }
   try{
-    const langPathAbs = new URL("./tessdata/", location.href).href;
-
-    // iOS安定化：worker/core を明示 + blob URLを避ける
-    tessWorker = await Tesseract.createWorker({
-      workerPath: "https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/worker.min.js",
-      corePath:   "https://cdn.jsdelivr.net/npm/tesseract.js-core@5.1.1/tesseract-core.wasm.js",
-      langPath:   langPathAbs,
-      gzip: false,
-      workerBlobURL: false,
-      logger: (m)=>{ /* console.log(m) */ }
-    });
-
-    await tessWorker.load();
-    await tessWorker.loadLanguage(TESS_LANG);
-    await tessWorker.initialize(TESS_LANG);
-    await tessWorker.setParameters({
-      tessedit_char_whitelist: "0123456789.",
-      tessedit_pageseg_mode: Tesseract.PSM.SINGLE_WORD
-    });
-
-    tessReady=true;
-    setTessState("ready ("+TESS_LANG+")");
+    model = await tf.loadLayersModel(url, {strict:true});
+    // warmup
+    const ish = model.inputs[0].shape; // [null,h,w,1]
+    const h = ish[1]||32, w = ish[2]||32;
+    tf.tidy(()=>model.predict(tf.zeros([1,h,w,1])).dispose());
+    modelReady=true;
+    mlStateEl.textContent=`ml: ready (backend=${tf.getBackend()} url=${url})`;
     return true;
   }catch(e){
-    tessReady=false;
-    setTessState("failed: " + (e?.message||e));
-    await killTesseract();
+    modelReady=false;
+    mlStateEl.textContent="ml: load failed: "+(e?.message||e);
     return false;
   }
 }
-btnInitTess.onclick=async()=>{ await initTesseract(); };
+btnLoadModel.onclick=async()=>{
+  const url = localStorage.getItem(LS.model) || "./model/model.json";
+  const ok = await loadModel(url);
+  if(ok) localStorage.setItem(LS.model, url);
+};
 
-// build OCR canvas from BW (white bg, black segments)
-function buildOcrCanvasFromBW(bw,w,h){
-  const maxW = iosSafeEl.checked ? 260 : 420; // iOSで落ちにくくするため控えめ
-  let tw=w, th=h;
-  if(w>maxW){
-    const s=maxW/w;
-    tw=Math.round(w*s);
-    th=Math.round(h*s);
+// digit crop → tensor
+function cropToTensorGray(imgData, x, y, w, h, outW, outH){
+  // draw ROI digit to small canvas and read grayscale
+  dig.width = outW; dig.height = outH;
+  // put ROI image into temp canvas
+  const tmp = document.createElement("canvas");
+  tmp.width = imgData.width; tmp.height = imgData.height;
+  const tctx = tmp.getContext("2d",{willReadFrequently:true});
+  tctx.putImageData(imgData,0,0);
+  ctxD.imageSmoothingEnabled = true;
+  ctxD.clearRect(0,0,outW,outH);
+  ctxD.drawImage(tmp, x,y,w,h, 0,0,outW,outH);
+  const d = ctxD.getImageData(0,0,outW,outH).data;
+  // normalize to 0..1 (grayscale)
+  const arr = new Float32Array(outW*outH);
+  for(let i=0,p=0;i<arr.length;i++,p+=4){
+    const r=d[p], g=d[p+1], b=d[p+2];
+    arr[i] = (0.299*r + 0.587*g + 0.114*b) / 255.0;
   }
-  ocrC.width=tw; ocrC.height=th;
-
-  tmpOCRSrc.width=w; tmpOCRSrc.height=h;
-  const img = ctxTmp.createImageData(w,h);
-  const d=img.data;
-  for(let i=0;i<bw.length;i++){
-    const v = bw[i] ? 0 : 255;
-    const p=i*4;
-    d[p]=v; d[p+1]=v; d[p+2]=v; d[p+3]=255;
-  }
-  ctxTmp.putImageData(img,0,0);
-
-  ctxOCR.imageSmoothingEnabled = true;
-  ctxOCR.clearRect(0,0,tw,th);
-  ctxOCR.drawImage(tmpOCRSrc,0,0,w,h,0,0,tw,th);
+  return tf.tensor4d(arr, [1,outH,outW,1]);
 }
 
-function cleanTessText(text){
-  if(!text) return null;
-  let s = text.replace(/\s+/g,"").trim();
-  s = s.replace(/,/g,".");
-  s = s.replace(/[Oo]/g,"0");
-  s = s.replace(/[^0-9.]/g,"");
-  const firstDot = s.indexOf(".");
-  if(firstDot>=0){
-    s = s.slice(0, firstDot+1) + s.slice(firstDot+1).replace(/\./g,"");
-  }
-  s = s.replace(/^\./,"").replace(/\.$/,"");
-  if(!s) return null;
+async function predictDigitsWithModel(imgData, nDigits){
+  if(!modelReady) return {text:null, conf:0, debug:"ml-not-ready"};
+  const ish = model.inputs[0].shape; // [null,h,w,1]
+  const H = ish[1]||32, W = ish[2]||32;
 
-  const decMode=decEl.value;
-  if(decMode==="none"){
-    s = s.replace(/\./g,"");
-  }else if(decMode==="last"){
-    if(!s.includes(".") && s.length>=2){
-      s = s.slice(0,-1)+"."+s.slice(-1);
-    }
-  }else{
-    if(!s.includes(".") && s.length>=3){
-      s = s.slice(0,-1)+"."+s.slice(-1);
-    }
+  // equal-split inside ROI imageData
+  // NOTE: ROIは「表示窓」基準。数字が中央寄りなら左右マージンを少し削る
+  const w0 = imgData.width, h0 = imgData.height;
+  const mx = Math.floor(w0 * 0.12); // 左右マージン（必要なら調整）
+  const my = Math.floor(h0 * 0.10); // 上下マージン
+  const x0 = mx, y0 = my;
+  const ww = Math.max(10, w0 - mx*2);
+  const hh = Math.max(10, h0 - my*2);
+  const digitW = ww / nDigits;
+
+  let s="", confs=[];
+  for(let i=0;i<nDigits;i++){
+    const dx = Math.floor(x0 + i*digitW);
+    const dw = Math.floor(digitW);
+    const t = cropToTensorGray(imgData, dx, y0, dw, hh, W, H);
+    const {cls, prob} = tf.tidy(()=>{
+      const y = model.predict(t);
+      const p = y.dataSync();
+      let bestI=0, bestV=p[0];
+      for(let k=1;k<p.length;k++){ if(p[k]>bestV){bestV=p[k]; bestI=k;} }
+      return {cls: bestI, prob: bestV};
+    });
+    t.dispose();
+    if(cls===10) s += ""; // blank
+    else s += String(cls);
+    confs.push(prob);
   }
 
-  if(!/^[0-9]+(\.[0-9]+)?$/.test(s)) return null;
-  return toFixed1dp(s);
+  // decimal
+  const decMode = decEl.value;
+  if(decMode==="last"){
+    if(s.length>=2) s = s.slice(0,-1) + "." + s.slice(-1);
+  }
+
+  s = toFixed1dp(s);
+
+  const ok=/^[0-9]+(\.[0-9]+)?$/.test(s);
+  const conf = confs.length ? confs.reduce((a,b)=>a+b,0)/confs.length : 0;
+  return {text: ok?s:null, conf, debug:`ml ok avgP=${conf.toFixed(2)}`};
 }
 
-async function tessRecognize(bw,w,h){
-  if(!tessOnEl.checked) return null;
-  if(tessBusy) return null;
+// ===== stabilizer =====
+let lastCand=null, consec=0, stableText=null, stableConf=0, lastOkAt=0;
+function resetStabilizer(){ lastCand=null; consec=0; stableText=null; stableConf=0; lastOkAt=0; setLamp("off"); }
 
-  const now=performance.now();
-  const every=parseInt(tessEveryEl.value||"2500",10);
-  if(now - lastTessAt < every) return null;
-
-  if(!tessReady){
-    const ok = await initTesseract();
-    if(!ok) return null;
-  }
-
-  tessBusy=true;
-  lastTessAt=now;
-  try{
-    buildOcrCanvasFromBW(bw,w,h);
-    const { data } = await tessWorker.recognize(ocrC);
-    const cleaned = cleanTessText(data?.text||"");
-    return cleaned;
-  }catch(e){
-    setTessState("recognize failed: "+(e?.message||e));
-    return null;
-  }finally{
-    tessBusy=false;
-  }
-}
-// ---------------------------------------------------
-
-// loop
+// ===== loop =====
 let lastAnalyzeAt=0;
-let failSince=null;
 
 function loop(){
   const now=performance.now();
@@ -949,51 +507,31 @@ function loop(){
   }
   lastAnalyzeAt=now;
 
-  // 処理サイズを上限で縮小（iOS安定化）
-  const maxPW=parseInt(maxProcWEl.value||"420",10);
-  const scale = Math.min(1, maxPW / Math.max(1,rw));
-  const pw = Math.max(10, Math.round(rw*scale));
-  const ph = Math.max(10, Math.round(rh*scale));
-
-  work.width=pw; work.height=ph;
-  ctxW.drawImage(video, rx, ry, rw, rh, 0, 0, pw, ph);
-
-  const img=ctxW.getImageData(0,0,pw,ph);
-  const d=img.data;
-
-  const gray=new Uint8Array(pw*ph);
-  for(let i=0,p=0;i<d.length;i+=4,p++){
-    const r=d[i], g=d[i+1], b=d[i+2];
-    gray[p]=(r*0.299 + g*0.587 + b*0.114)|0;
-  }
-
-  const bw = computeBW(gray,pw,ph);
-
-  const blob=findDenseBlobBBox(bw,pw,ph);
-  if(blob.ok){
-    // overlayに戻す時はスケールを戻す
-    const sx = blob.x/scale, sy=blob.y/scale, sw=blob.w/scale, sh=blob.h/scale;
-    ctxO.strokeStyle='rgba(0,200,255,.95)'; ctxO.lineWidth=3;
-    ctxO.strokeRect(rx+sx+1, ry+sy+1, sw-2, sh-2);
-  }
+  work.width=rw; work.height=rh;
+  ctxW.drawImage(video, rx, ry, rw, rh, 0, 0, rw, rh);
+  const img=ctxW.getImageData(0,0,rw,rh);
 
   const nd=parseInt(digitsEl.value,10);
-  const decMode=decEl.value;
-  const segThr=parseFloat(segThrEl.value);
-  const res=recognizeDigits(bw,pw,ph,nd,decMode,segThr,blob);
 
-  if(res.debugBoxes && res.debugBoxes.length){
-    ctxO.strokeStyle='rgba(255,230,0,.95)'; ctxO.lineWidth=2;
-    for(const b of res.debugBoxes){
-      const sx=b.x/scale, sy=b.y/scale, sw=b.w/scale, sh=b.h/scale;
-      ctxO.strokeRect(rx+sx, ry+sy, sw, sh);
-    }
+  // candidate (ML)
+  let candidate=null, conf=0, debug="";
+
+  if(useMLEl.checked){
+    // NOTE: ML推論はasyncだけど、ここは軽量にするため await で直列（推論間隔で抑制）
+    // iPhoneで重い場合は interval を上げてください。
+    predictDigitsWithModel(img, nd).then(res=>{
+      applyCandidate(res.text, res.conf, res.debug);
+    });
+  }else{
+    // ML OFF の場合は未実装（必要なら従来の7セグ判定をここに戻せます）
+    applyCandidate(null, 0, "ml-off");
   }
 
-  let candidate=res.text;
-  const conf=res.conf ?? 0;
-  if(candidate) candidate=toFixed1dp(candidate);
-  candLine.textContent = `候補: ${candidate ?? "—"}  (conf=${conf.toFixed(2)} / ${res.debug}${tessBusy?" + tess…":""})`;
+  rafId=requestAnimationFrame(loop);
+}
+
+function applyCandidate(candidate, conf, debug){
+  candLine.textContent = `候補: ${candidate ?? "—"} (conf=${conf.toFixed(2)} / ${debug})`;
 
   const needFrames=parseInt(needFramesEl.value,10);
   const needConf=parseFloat(needConfEl.value);
@@ -1001,32 +539,16 @@ function loop(){
 
   let acceptable = (candidate !== null) && (conf >= needConf) && passesGate(candidate);
 
-  if(!acceptable){
-    if(failSince===null) failSince=now;
-    const after=parseInt(tessAfterFailEl.value||"1600",10);
-    if(tessOnEl.checked && (now - failSince) >= after){
-      tessRecognize(bw,pw,ph).then(tessText=>{
-        if(!tessText) return;
-        if(!passesGate(tessText)) return;
-        stableText=tessText; lastOkAt=performance.now();
-        outEl.textContent=stableText;
-        setLamp("cyan");
-      });
-    }
-  }else{
-    failSince=null;
-  }
-
   if(acceptable){
-    lastOkAt = now;
+    lastOkAt = performance.now();
     if(candidate === lastCand) consec++;
     else { lastCand=candidate; consec=1; }
 
     if(!stabilizeEl.checked){
-      stableText=candidate; outEl.textContent=stableText; setLamp("green");
+      stableText=candidate; stableConf=conf; outEl.textContent=stableText; setLamp("green");
     }else{
       if(consec >= needFrames){
-        stableText=candidate; outEl.textContent=stableText; setLamp("green");
+        stableText=candidate; stableConf=conf; outEl.textContent=stableText; setLamp("green");
       }else{
         if(!holdEl.checked) outEl.textContent="—";
         else if(stableText) outEl.textContent=stableText;
@@ -1035,31 +557,28 @@ function loop(){
     }
   }else{
     lastCand=null; consec=0;
+    const now=performance.now();
     const withinGrace = stableText && (now - lastOkAt) <= graceMs;
     if(withinGrace && holdEl.checked){
-      if(!lampEl.classList.contains("cyan")) setLamp("green");
       outEl.textContent=stableText;
+      setLamp("green");
     }else{
       if(!holdEl.checked) outEl.textContent="—";
       else if(stableText) outEl.textContent=stableText;
-      if(!lampEl.classList.contains("cyan")) setLamp("yellow");
+      setLamp("yellow");
     }
   }
 
   const camLabel = selCam.selectedOptions?.[0]?.textContent || "";
   dbgEl.textContent =
-    `proc=${pw}x${ph} scale=${scale.toFixed(2)} | thr=${thrModeEl.value} inv=${invertEl.checked?1:0} dil=${dilateEl.checked?1:0} segThr=${segThr.toFixed(2)} | ` +
-    `stable=${stabilizeEl.checked?1:0} consec=${consec}/${needFrames} conf=${conf.toFixed(2)} needConf=${needConf.toFixed(2)} grace=${graceMs}ms gate=${gateOnEl.checked?1:0} | ` +
-    `tess=${tessOnEl.checked?1:0} ready=${tessReady?1:0} busy=${tessBusy?1:0} lang=${TESS_LANG} | cam="${camLabel}"`;
-
-  rafId=requestAnimationFrame(loop);
+    `ml=${useMLEl.checked?1:0} ready=${modelReady?1:0} conf=${conf.toFixed(2)} needConf=${Number(needConfEl.value).toFixed(2)} `+
+    `stable=${stabilizeEl.checked?1:0} consec=${consec}/${needFrames} grace=${graceMs}ms | cam="${camLabel}"`;
 }
 
 // init
 navigator.mediaDevices?.addEventListener?.('devicechange', ()=>listCams({preserve:true,autoPickBack:true}));
 listCams({preserve:true,autoPickBack:true}).catch(()=>{});
 setRoiBox(); syncLabels();
-probeTraineddata().catch(()=>{});
 </script>
 </body>
 </html>
