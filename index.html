@@ -3,43 +3,34 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>7セグ認識 Webアプリ v16（TFJS学習モデル / 自動桁分割）</title>
+<title>7セグ読み取り v18（7窓のみ・学習モデルなし）</title>
 <style>
   body{font-family:system-ui,-apple-system,sans-serif;margin:0;background:#111;color:#eee}
-  .wrap{display:flex;flex-direction:column;gap:10px;padding:10px;max-width:1200px;margin:0 auto}
+  .wrap{max-width:1100px;margin:0 auto;padding:10px;display:flex;flex-direction:column;gap:10px}
   .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
   button,select,input{font-size:16px;padding:8px 10px}
-  .stage{position:relative;width:100%;aspect-ratio:16/9;background:#000;overflow:hidden;border-radius:10px}
+  .btn{background:#2a2a2a;border:1px solid #3a3a3a;color:#fff;border-radius:10px}
+  .btn:active{transform:translateY(1px)}
+  .chip{display:flex;align-items:center;gap:6px;background:#1c1c1c;border:1px solid #2a2a2a;padding:6px 8px;border-radius:999px}
+  .stage{position:relative;width:100%;aspect-ratio:16/9;background:#000;overflow:hidden;border-radius:12px}
   video,canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
-  .roi{position:absolute;border:2px solid rgba(255,0,0,.9);box-shadow:0 0 0 9999px rgba(0,0,0,.35);border-radius:8px;pointer-events:none}
-  .panel{background:#1b1b1b;padding:10px;border-radius:10px}
-  .k{color:#9ad}
-  .big{font-size:36px;font-weight:900;letter-spacing:.5px;display:flex;align-items:center;gap:10px}
-  .sub{font-size:14px;color:#cfcfcf;margin-top:4px}
+  .panel{background:#1b1b1b;border-radius:12px;padding:10px}
+  .big{font-size:42px;font-weight:900;letter-spacing:.5px;display:flex;align-items:center;gap:10px}
+  .lamp{width:12px;height:12px;border-radius:999px;background:#666;box-shadow:0 0 0 2px rgba(255,255,255,.08) inset}
+  .lamp.green{background:#1fe36d}
+  .lamp.yellow{background:#ffd34d}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  .sub{color:#cfcfcf;font-size:14px;margin-top:4px}
+  details{background:#151515;border-radius:12px;padding:8px 10px}
+  details summary{cursor:pointer}
+  .kv{display:grid;grid-template-columns:170px 1fr 70px;gap:8px;align-items:center;margin-top:8px}
+  .kv label{color:#bbb;font-size:13px}
+  .kv input[type=range]{width:100%}
   .hint{color:#bbb;font-size:13px;line-height:1.45}
   .grid{display:grid;grid-template-columns:1.1fr .9fr;gap:10px}
   @media (max-width:920px){.grid{grid-template-columns:1fr}}
-  .chip{display:flex;align-items:center;gap:6px;background:#222;padding:6px 8px;border-radius:999px}
-  details{background:#151515;border-radius:10px;padding:8px 10px}
-  details summary{cursor:pointer}
-  .kv{display:grid;grid-template-columns:180px 1fr 70px;gap:8px;align-items:center;margin-top:8px}
-  .kv label{color:#bbb;font-size:13px}
-  .kv input[type=range]{width:100%}
-  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
-  .lamp{width:12px;height:12px;border-radius:999px;background:#555;box-shadow:0 0 0 2px rgba(255,255,255,.08) inset}
-  .lamp.green{background:#1fe36d}
-  .lamp.yellow{background:#ffd34d}
-  .btn{background:#2a2a2a;border:1px solid #3a3a3a;color:#fff;border-radius:10px}
-  .btn:active{transform:translateY(1px)}
   .smallinp{width:90px;padding:6px 8px;border-radius:8px;border:1px solid #333;background:#101010;color:#fff}
-  .digits{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
-  .digcard{background:#121212;border:1px solid #2b2b2b;border-radius:10px;padding:8px}
-  .digcard canvas{display:block;width:72px;height:72px;border-radius:8px;background:#000}
-  .digmeta{margin-top:6px;font-size:12px;color:#cfcfcf}
 </style>
-
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-wasm@4.20.0/dist/tf-backend-wasm.min.js"></script>
 </head>
 <body>
 <div class="wrap">
@@ -51,11 +42,7 @@
     <select id="selCam"></select>
     <span class="chip"><input id="lockBack" type="checkbox" checked>背面固定</span>
 
-    <span class="chip"><input id="useML" type="checkbox" checked>学習モデル使用</span>
-    <span class="chip"><input id="useSeg" type="checkbox" checked>構造認識(7窓)</span>
-    <button id="btnLoadModel" class="btn" type="button">モデル読込</button>
-
-    <label>推論間隔(ms)</label>
+    <label>解析(ms)</label>
     <input id="anMs" type="range" min="80" max="400" step="10" value="160">
     <span id="anMsVal" class="mono">160</span>
 
@@ -73,66 +60,45 @@
 
     <span class="chip"><input id="stabilize" type="checkbox" checked>ちらつき防止</span>
     <span class="chip"><input id="hold" type="checkbox" checked>確定値ホールド</span>
-    <span class="chip"><input id="wasm" type="checkbox" checked>TFJS WASM（iPhone安定）</span>
   </div>
 
   <details open>
-    <summary>自動桁分割（ここがズレると conf が 0.09〜0.10 で「全部8」になります）</summary>
+    <summary>合わせ込み（横断窓ガイド）</summary>
+    <div class="hint" style="margin-top:8px">
+      画面に表示される <b>4桁分の横断窓</b>（細い枠）に、体重計の表示窓を<b>ぴったり重ねて</b>ください。
+      これがズレると誤読します。
+    </div>
+    <div class="kv"><label>ガイドX（%）</label><input id="gx" type="range" min="0" max="1" step="0.01"><span id="gxv"></span></div>
+    <div class="kv"><label>ガイドY（%）</label><input id="gy" type="range" min="0" max="1" step="0.01"><span id="gyv"></span></div>
+    <div class="kv"><label>ガイドW（%）</label><input id="gw" type="range" min="0.20" max="1" step="0.01"><span id="gwv"></span></div>
+    <div class="kv"><label>ガイドH（%）</label><input id="gh" type="range" min="0.10" max="0.70" step="0.01"><span id="ghv"></span></div>
     <div class="row" style="margin-top:8px">
-      <span class="chip"><input id="autoSplit" type="checkbox" checked>自動桁分割</span>
-      <span class="chip">検出縮小W <input id="splitW" class="smallinp" type="number" value="320"></span>
-      <span class="chip">列しきい値(%) <input id="colPct" class="smallinp" type="number" step="0.5" value="6.0"></span>
-      <span class="chip">最小幅(px) <input id="minRun" class="smallinp" type="number" value="10"></span>
-      <span class="chip">結合距離(px) <input id="mergeGap" class="smallinp" type="number" value="6"></span>
-    </div>
-    <div class="hint" style="margin-top:8px">
-      ・kg の文字や枠が入っても、数字の柱（縦投影）で桁領域を見つけます。<br>
-      ・うまく分割できない場合は「列しきい値(%)」を 4〜10 の範囲で動かしてください。
-    </div>
-  </details>
-
-
-  <details>
-    <summary>構造認識（7窓: セグメント横断でON/OFF判定）</summary>
-    <div class="row" style="margin-top:8px;flex-wrap:wrap">
-      <span class="chip"><input id="segBold" type="checkbox" checked>太らせる（細線対策）</span>
-      <span class="chip">MLフォールバックconf <input id="segFallback" class="smallinp" type="number" step="0.05" value="0.55"></span>
-      <span class="chip">空白判定(ink%) <input id="segBlankInk" class="smallinp" type="number" step="0.01" value="0.02"></span>
-    </div>
-    <div class="hint" style="margin-top:8px">
-      ・各桁を7つの小領域（a〜g）に分け、各領域の「黒(=セグ)ピクセル比」でON/OFFを決めます。<br>
-      ・領域はセグメントを<strong>横断する</strong>形に置くと、周囲の枠や文字の影響が減ります（PDFの図6の考え方）。<br>
-      ・まずは「構造認識(7窓)ON + 自動2値化(Otsu)」で安定させ、難しい時だけ学習モデルをONにしてください。
+      <button id="btnGuideReset" class="btn" type="button">ガイド初期化</button>
+      <span class="chip"><input id="showWindows" type="checkbox" checked>横断窓を表示</span>
+      <span class="chip"><input id="showDigitBoxes" type="checkbox" checked>桁枠を表示</span>
     </div>
   </details>
 
   <details open>
-    <summary>入力前処理（まずは raw 推奨）</summary>
+    <summary>前処理（軽い・iPhone向け）</summary>
     <div class="row" style="margin-top:8px">
-      <label>入力モード</label>
-      <select id="preMode">
-        <option value="raw" selected>raw（そのままグレースケール）</option>
-        <option value="invert">invert（白黒反転）</option>
-        <option value="otsu">otsu（二値化:自動しきい値）</option>
-        <option value="otsu_inv">otsu+invert（二値化して反転）</option>
-      </select>
-      <span class="chip"><input id="autoInv" type="checkbox">自動反転（平均で判定）</span>
-      <span class="chip">γ <input id="gamma" class="smallinp" type="number" step="0.1" value="1.0"></span>
-      <span class="chip">コントラスト <input id="contrast" class="smallinp" type="number" step="0.1" value="1.2"></span>
-      <span class="chip"><input id="norm01" type="checkbox" checked>0..1正規化</span>
+      <span class="chip"><input id="invert" type="checkbox" checked>反転（黒数字用）</span>
+      <span class="chip"><input id="autoOtsu" type="checkbox" checked>自動2値化（Otsu）</span>
+      <span class="chip">Otsuオフセット <input id="otsuOff" class="smallinp" type="number" step="1" value="-15"></span>
+      <span class="chip"><input id="dilate" type="checkbox" checked>太らせる（細いセグ対策）</span>
+      <span class="chip">太さ <input id="dilateN" class="smallinp" type="number" min="1" max="3" value="1"></span>
     </div>
-
-    <div class="kv"><label>上下マージン（%）</label><input id="my" type="range" min="0" max="40" step="1" value="8"><span id="myv"></span></div>
-
+    <div class="kv"><label>セグ判定しきい値（黒率）</label><input id="segThr" type="range" min="0.10" max="0.60" step="0.01" value="0.28"><span id="segThrVal"></span></div>
+    <div class="kv"><label>空白判定（全体黒率）</label><input id="blankThr" type="range" min="0.00" max="0.10" step="0.005" value="0.02"><span id="blankThrVal"></span></div>
     <div class="hint" style="margin-top:8px">
-      あなたの学習スクリプト（CNN）は基本「グレースケール」学習なので、まず raw で合わせるのが近道です。
+      ・黒数字（明るい背景）なら <b>反転ON</b> が基本。<br>
+      ・読めない時は、まず <b>seg判定</b> を 0.22〜0.38 で調整 → 次に Otsuオフセット（-40〜+20）。<br>
     </div>
   </details>
 
   <details open>
     <summary>安定化（確定表示）</summary>
     <div class="kv"><label>確定に必要な連続フレーム</label><input id="needFrames" type="range" min="1" max="20" step="1" value="6"><span id="needFramesVal"></span></div>
-    <div class="kv"><label>確定に必要な信頼度</label><input id="needConf" type="range" min="0.20" max="0.99" step="0.01" value="0.55"><span id="needConfVal"></span></div>
     <div class="kv"><label>失敗許容（ms）</label><input id="graceMs" type="range" min="0" max="2500" step="50" value="900"><span id="graceMsVal"></span></div>
     <div class="row" style="margin-top:8px">
       <span class="chip">範囲 <input id="minVal" class="smallinp" type="number" step="0.1" value="10"> ～ <input id="maxVal" class="smallinp" type="number" step="0.1" value="250"></span>
@@ -140,230 +106,193 @@
     </div>
   </details>
 
-  <details>
-    <summary>ROI調整（1回合わせたら保存）</summary>
-    <div class="kv"><label>X</label><input id="roiX" type="range" min="0" max="1" step="0.01"><span id="roiXv"></span></div>
-    <div class="kv"><label>Y</label><input id="roiY" type="range" min="0" max="1" step="0.01"><span id="roiYv"></span></div>
-    <div class="kv"><label>W</label><input id="roiW" type="range" min="0.05" max="1" step="0.01"><span id="roiWv"></span></div>
-    <div class="kv"><label>H</label><input id="roiH" type="range" min="0.05" max="1" step="0.01"><span id="roiHv"></span></div>
-    <div class="row" style="margin-top:8px">
-      <button id="btnRoiReset" type="button" class="btn">ROIリセット</button>
-    </div>
-    <div class="hint" style="margin-top:6px">
-      ROIは「表示窓だけ」に。周囲の印字が入るほど誤判定が増えます。
-    </div>
-  </details>
-
   <div class="grid">
     <div class="stage">
       <video id="video" playsinline muted></video>
       <canvas id="overlay"></canvas>
-      <div id="roi" class="roi"></div>
     </div>
 
     <div class="panel">
-      <div><span class="k">表示（確定）</span></div>
-      <div class="big"><span id="lamp" class="lamp"></span><span id="out">—</span></div>
-      <div id="candLine" class="sub mono">候補: —</div>
-      <div class="hint mono" id="dbg"></div>
+      <div><b>表示（確定）</b></div>
+      <div class="big"><span id="lamp" class="lamp yellow"></span><span id="out">—</span></div>
+      <div id="cand" class="sub mono">候補: —</div>
+      <div id="dbg" class="hint mono" style="margin-top:8px"></div>
       <div class="row" style="margin-top:10px">
         <button id="btnCopy" class="btn" type="button">確定値をコピー</button>
       </div>
-      <div class="hint mono" id="mlState" style="margin-top:6px">ml: not loaded</div>
-
-      <div class="digits" id="digPrev"></div>
-
-      <hr style="border:0;border-top:1px solid #333;margin:10px 0">
-      <div class="hint">
-        ・conf が 0.09〜0.10 なら「モデルが桁を見失ってる」状態です（自動桁分割とROIで直ります）。<br>
+      <div class="hint" style="margin-top:8px">
+        コツ：ガイド（赤）に表示窓を合わせたら、以後は体重計とiPhoneを固定。<br>
+        それでもチラつくなら「確定に必要な連続フレーム」を 8〜12 に。
       </div>
     </div>
   </div>
 
   <canvas id="work" style="display:none"></canvas>
-  <canvas id="seg" style="display:none"></canvas>
-  <canvas id="dig" style="display:none"></canvas>
 </div>
 
 <script>
-const $ = (id)=>document.getElementById(id);
+const $=id=>document.getElementById(id);
+const video=$("video"), overlay=$("overlay"), work=$("work");
+const ctxO=overlay.getContext("2d",{willReadFrequently:true});
+const ctxW=work.getContext("2d",{willReadFrequently:true});
 
-const video=$("video"), overlay=$("overlay"), work=$("work"), seg=$("seg"), dig=$("dig");
-const ctxO = overlay.getContext('2d',{willReadFrequently:true});
-const ctxW = work.getContext('2d',{willReadFrequently:true});
-const ctxS = seg.getContext('2d',{willReadFrequently:true});
-const ctxD = dig.getContext('2d',{willReadFrequently:true});
-
-const btnStart=$("btnStart"), btnStop=$("btnStop"), selCam=$("selCam");
-const lockBack=$("lockBack");
-const useMLEl=$("useML"), useSegEl=$("useSeg"), btnLoadModel=$("btnLoadModel");
-const segBoldEl=$("segBold"), segFallbackEl=$("segFallback"), segBlankInkEl=$("segBlankInk");
-const anMsEl=$("anMs"), anMsVal=$("anMsVal");
-const digitsEl=$("digits"), decEl=$("decimal");
+const btnStart=$("btnStart"), btnStop=$("btnStop"), selCam=$("selCam"), lockBack=$("lockBack");
+const anMs=$("anMs"), anMsVal=$("anMsVal"), digitsEl=$("digits"), decEl=$("decimal");
 const stabilizeEl=$("stabilize"), holdEl=$("hold");
-const needFramesEl=$("needFrames"), needFramesVal=$("needFramesVal");
-const needConfEl=$("needConf"), needConfVal=$("needConfVal");
-const graceMsEl=$("graceMs"), graceMsVal=$("graceMsVal");
-const minValEl=$("minVal"), maxValEl=$("maxVal"), force1dpEl=$("force1dp");
-const wasmEl=$("wasm");
 
-const autoSplitEl=$("autoSplit"), splitWEl=$("splitW"), colPctEl=$("colPct"), minRunEl=$("minRun"), mergeGapEl=$("mergeGap");
+const gx=$("gx"), gy=$("gy"), gw=$("gw"), gh=$("gh");
+const gxv=$("gxv"), gyv=$("gyv"), gwv=$("gwv"), ghv=$("ghv");
+const btnGuideReset=$("btnGuideReset"), showWindows=$("showWindows"), showDigitBoxes=$("showDigitBoxes");
 
-const preModeEl=$("preMode"), autoInvEl=$("autoInv"), norm01El=$("norm01");
-const gammaEl=$("gamma"), contrastEl=$("contrast"), myEl=$("my"), myv=$("myv");
+const invertEl=$("invert"), autoOtsu=$("autoOtsu"), otsuOff=$("otsuOff"), dilate=$("dilate"), dilateN=$("dilateN");
+const segThr=$("segThr"), segThrVal=$("segThrVal"), blankThr=$("blankThr"), blankThrVal=$("blankThrVal");
 
-const outEl=$("out"), candLine=$("candLine"), dbgEl=$("dbg"), roiEl=$("roi"), lampEl=$("lamp"), btnCopy=$("btnCopy");
-const mlStateEl=$("mlState"), digPrev=$("digPrev");
-const roiX=$("roiX"), roiY=$("roiY"), roiW=$("roiW"), roiH=$("roiH");
-const roiXv=$("roiXv"), roiYv=$("roiYv"), roiWv=$("roiWv"), roiHv=$("roiHv");
-const btnRoiReset=$("btnRoiReset");
+const needFrames=$("needFrames"), needFramesVal=$("needFramesVal"), graceMs=$("graceMs"), graceMsVal=$("graceMsVal");
+const minVal=$("minVal"), maxVal=$("maxVal"), force1dp=$("force1dp");
 
-let stream=null, rafId=null;
-let inflight=false;
+const lamp=$("lamp"), out=$("out"), cand=$("cand"), dbg=$("dbg"), btnCopy=$("btnCopy");
+
+let stream=null, rafId=null, lastAnalyzeAt=0;
 
 const LS={
-  cam:"sevenseg_cam_deviceid", lock:"sevenseg_lockback", roi:"sevenseg_roi_v16",
-  useML:"sevenseg_useml", useSeg:"sevenseg_useseg", segBold:"sevenseg_segbold", segFallback:"sevenseg_segfallback", segBlankInk:"sevenseg_segblankink", an:"sevenseg_anms", digits:"sevenseg_digits", dec:"sevenseg_dec",
-  stab:"sevenseg_stab", hold:"sevenseg_hold", nf:"sevenseg_needframes", nc:"sevenseg_needconf", gm:"sevenseg_gracems",
-  minv:"sevenseg_minval", maxv:"sevenseg_maxval", force:"sevenseg_force1dp", wasm:"sevenseg_wasm",
-  model:"sevenseg_model_url",
-  premode:"sevenseg_premode", autoinv:"sevenseg_autoinv", norm01:"sevenseg_norm01", gamma:"sevenseg_gamma", contrast:"sevenseg_contrast",
-  my:"sevenseg_my",
-  autos:"sevenseg_autosplit", splitw:"sevenseg_splitw", colpct:"sevenseg_colpct", minrun:"sevenseg_minrun", mergegap:"sevenseg_mergegap"
+  cam:"sevenseg_cam_deviceid",
+  lock:"sevenseg_lockback",
+  guide:"sevenseg_guide_v18",
+  an:"sevenseg_anms_v18",
+  digits:"sevenseg_digits_v18",
+  dec:"sevenseg_dec_v18",
+  inv:"sevenseg_inv_v18",
+  otsu:"sevenseg_otsu_v18",
+  otsuOff:"sevenseg_otsuOff_v18",
+  dil:"sevenseg_dil_v18",
+  diln:"sevenseg_diln_v18",
+  seg:"sevenseg_segthr_v18",
+  blank:"sevenseg_blankthr_v18",
+  nf:"sevenseg_needframes_v18",
+  gm:"sevenseg_grace_v18",
+  minv:"sevenseg_minv_v18",
+  maxv:"sevenseg_maxv_v18",
+  force:"sevenseg_force1dp_v18",
+  showW:"sevenseg_showwin_v18",
+  showB:"sevenseg_showbox_v18",
+  stab:"sevenseg_stab_v18",
+  hold:"sevenseg_hold_v18",
 };
 
 function clamp(v,a,b){return Math.max(a,Math.min(b,v))}
 function clamp01(v){return clamp(v,0,1)}
 function setLamp(state){
-  lampEl.classList.remove("green","yellow");
-  if(state==="green") lampEl.classList.add("green");
-  if(state==="yellow") lampEl.classList.add("yellow");
+  lamp.classList.remove("green","yellow");
+  if(state==="green") lamp.classList.add("green");
+  else lamp.classList.add("yellow");
 }
-function setRoiBox(){
-  const stage=roiEl.parentElement;
-  const r=stage.getBoundingClientRect();
-  roiEl.style.left=(ROI.x*r.width)+"px";
-  roiEl.style.top=(ROI.y*r.height)+"px";
-  roiEl.style.width=(ROI.w*r.width)+"px";
-  roiEl.style.height=(ROI.h*r.height)+"px";
-}
-window.addEventListener('resize', setRoiBox);
-
-// ROI
-const defaultRoi={x:0.18,y:0.44,w:0.64,h:0.20};
-let ROI=loadROI();
-function loadROI(){
-  try{
-    const s=localStorage.getItem(LS.roi); if(!s) return {...defaultRoi};
-    const o=JSON.parse(s);
-    return {x:clamp01(+o.x),y:clamp01(+o.y),w:clamp01(+o.w),h:clamp01(+o.h)};
-  }catch(_){return {...defaultRoi}}
-}
-function saveROI(){localStorage.setItem(LS.roi,JSON.stringify(ROI))}
-
 function syncLabels(){
-  anMsVal.textContent=String(anMsEl.value);
-  needFramesVal.textContent=String(needFramesEl.value);
-  needConfVal.textContent=Number(needConfEl.value).toFixed(2);
-  graceMsVal.textContent=String(graceMsEl.value);
-  myv.textContent=myEl.value+"%";
+  anMsVal.textContent=String(anMs.value);
+  segThrVal.textContent=Number(segThr.value).toFixed(2);
+  blankThrVal.textContent=Number(blankThr.value).toFixed(3);
+  needFramesVal.textContent=String(needFrames.value);
+  graceMsVal.textContent=String(graceMs.value);
 
-  roiX.value=ROI.x; roiY.value=ROI.y; roiW.value=ROI.w; roiH.value=ROI.h;
-  roiXv.textContent=ROI.x.toFixed(2);
-  roiYv.textContent=ROI.y.toFixed(2);
-  roiWv.textContent=ROI.w.toFixed(2);
-  roiHv.textContent=ROI.h.toFixed(2);
+  gxv.textContent=(+gx.value).toFixed(2);
+  gyv.textContent=(+gy.value).toFixed(2);
+  gwv.textContent=(+gw.value).toFixed(2);
+  ghv.textContent=(+gh.value).toFixed(2);
 }
-function bindRoi(sl,key){
-  sl.addEventListener('input', ()=>{
-    ROI[key]=clamp01(parseFloat(sl.value));
-    if(key==="w") ROI.w=Math.max(0.05,ROI.w);
-    if(key==="h") ROI.h=Math.max(0.05,ROI.h);
-    ROI.x=clamp01(Math.min(ROI.x,1-ROI.w));
-    ROI.y=clamp01(Math.min(ROI.y,1-ROI.h));
-    saveROI(); syncLabels(); setRoiBox();
-  });
+function loadGuide(){
+  const def={x:0.18,y:0.44,w:0.64,h:0.20};
+  try{
+    const s=localStorage.getItem(LS.guide);
+    if(!s) return def;
+    const o=JSON.parse(s);
+    return {x:clamp01(+o.x),y:clamp01(+o.y),w:clamp(+o.w,0.20,1),h:clamp(+o.h,0.10,0.70)};
+  }catch(_){return def}
 }
-bindRoi(roiX,"x"); bindRoi(roiY,"y"); bindRoi(roiW,"w"); bindRoi(roiH,"h");
-btnRoiReset.onclick=()=>{ ROI={...defaultRoi}; saveROI(); syncLabels(); setRoiBox(); };
+let GUIDE=loadGuide();
+function applyGuideToUI(){
+  gx.value=GUIDE.x; gy.value=GUIDE.y; gw.value=GUIDE.w; gh.value=GUIDE.h;
+  syncLabels();
+}
+function saveGuide(){
+  localStorage.setItem(LS.guide, JSON.stringify(GUIDE));
+}
 
-// settings restore
 function restore(){
   lockBack.checked=(localStorage.getItem(LS.lock)??"1")==="1";
-  selCam.value=localStorage.getItem(LS.cam)||"";
-  useMLEl.checked=(localStorage.getItem(LS.useML)??"1")==="1";
-  useSegEl.checked=(localStorage.getItem(LS.useSeg)??"1")==="1";
-  segBoldEl.checked=(localStorage.getItem(LS.segBold)??"1")==="1";
-  segFallbackEl.value=(localStorage.getItem(LS.segFallback)??"0.55");
-  segBlankInkEl.value=(localStorage.getItem(LS.segBlankInk)??"0.02");
-  anMsEl.value=(localStorage.getItem(LS.an)??"160");
+  anMs.value=(localStorage.getItem(LS.an)??"160");
   digitsEl.value=(localStorage.getItem(LS.digits)??"4");
   decEl.value=(localStorage.getItem(LS.dec)??"last");
 
+  invertEl.checked=(localStorage.getItem(LS.inv)??"1")==="1";
+  autoOtsu.checked=(localStorage.getItem(LS.otsu)??"1")==="1";
+  otsuOff.value=(localStorage.getItem(LS.otsuOff)??"-15");
+  dilate.checked=(localStorage.getItem(LS.dil)??"1")==="1";
+  dilateN.value=(localStorage.getItem(LS.diln)??"1");
+  segThr.value=(localStorage.getItem(LS.seg)??"0.28");
+  blankThr.value=(localStorage.getItem(LS.blank)??"0.02");
+
+  needFrames.value=(localStorage.getItem(LS.nf)??"6");
+  graceMs.value=(localStorage.getItem(LS.gm)??"900");
+  minVal.value=(localStorage.getItem(LS.minv)??"10");
+  maxVal.value=(localStorage.getItem(LS.maxv)??"250");
+  force1dp.checked=(localStorage.getItem(LS.force)??"1")==="1";
+
+  showWindows.checked=(localStorage.getItem(LS.showW)??"1")==="1";
+  showDigitBoxes.checked=(localStorage.getItem(LS.showB)??"1")==="1";
   stabilizeEl.checked=(localStorage.getItem(LS.stab)??"1")==="1";
   holdEl.checked=(localStorage.getItem(LS.hold)??"1")==="1";
-  needFramesEl.value=(localStorage.getItem(LS.nf)??"6");
-  needConfEl.value=(localStorage.getItem(LS.nc)??"0.55");
-  graceMsEl.value=(localStorage.getItem(LS.gm)??"900");
-  minValEl.value=(localStorage.getItem(LS.minv)??"10");
-  maxValEl.value=(localStorage.getItem(LS.maxv)??"250");
-  force1dpEl.checked=(localStorage.getItem(LS.force)??"1")==="1";
-  wasmEl.checked=(localStorage.getItem(LS.wasm)??"1")==="1";
 
-  preModeEl.value=(localStorage.getItem(LS.premode)??"raw");
-  autoInvEl.checked=(localStorage.getItem(LS.autoinv)??"0")==="1";
-  norm01El.checked=(localStorage.getItem(LS.norm01)??"1")==="1";
-  gammaEl.value=(localStorage.getItem(LS.gamma)??"1.0");
-  contrastEl.value=(localStorage.getItem(LS.contrast)??"1.2");
-  myEl.value=(localStorage.getItem(LS.my)??"8");
-
-  autoSplitEl.checked=(localStorage.getItem(LS.autos)??"1")==="1";
-  splitWEl.value=(localStorage.getItem(LS.splitw)??"320");
-  colPctEl.value=(localStorage.getItem(LS.colpct)??"6.0");
-  minRunEl.value=(localStorage.getItem(LS.minrun)??"10");
-  mergeGapEl.value=(localStorage.getItem(LS.mergegap)??"6");
-
-  syncLabels();
+  GUIDE=loadGuide();
+  applyGuideToUI();
 }
 restore();
 
 function persist(){
   lockBack.onchange=()=>localStorage.setItem(LS.lock, lockBack.checked?"1":"0");
-  useMLEl.onchange=()=>localStorage.setItem(LS.useML, useMLEl.checked?"1":"0");
-  useSegEl.onchange=()=>localStorage.setItem(LS.useSeg, useSegEl.checked?"1":"0");
-  segBoldEl.onchange=()=>localStorage.setItem(LS.segBold, segBoldEl.checked?"1":"0");
-  segFallbackEl.onchange=()=>localStorage.setItem(LS.segFallback, segFallbackEl.value);
-  segBlankInkEl.onchange=()=>localStorage.setItem(LS.segBlankInk, segBlankInkEl.value);
-  anMsEl.oninput=()=>{localStorage.setItem(LS.an,anMsEl.value); syncLabels();}
-  digitsEl.onchange=()=>{localStorage.setItem(LS.digits,digitsEl.value); buildDigitPreview();}
-  decEl.onchange=()=>localStorage.setItem(LS.dec,decEl.value);
+  anMs.oninput=()=>{localStorage.setItem(LS.an,anMs.value); syncLabels();}
+  digitsEl.onchange=()=>localStorage.setItem(LS.digits, digitsEl.value);
+  decEl.onchange=()=>localStorage.setItem(LS.dec, decEl.value);
+
+  invertEl.onchange=()=>localStorage.setItem(LS.inv, invertEl.checked?"1":"0");
+  autoOtsu.onchange=()=>localStorage.setItem(LS.otsu, autoOtsu.checked?"1":"0");
+  otsuOff.onchange=()=>localStorage.setItem(LS.otsuOff, otsuOff.value);
+  dilate.onchange=()=>localStorage.setItem(LS.dil, dilate.checked?"1":"0");
+  dilateN.onchange=()=>localStorage.setItem(LS.diln, dilateN.value);
+  segThr.oninput=()=>{localStorage.setItem(LS.seg, segThr.value); syncLabels();}
+  blankThr.oninput=()=>{localStorage.setItem(LS.blank, blankThr.value); syncLabels();}
+
+  needFrames.oninput=()=>{localStorage.setItem(LS.nf, needFrames.value); syncLabels();}
+  graceMs.oninput=()=>{localStorage.setItem(LS.gm, graceMs.value); syncLabels();}
+  minVal.onchange=()=>localStorage.setItem(LS.minv, minVal.value);
+  maxVal.onchange=()=>localStorage.setItem(LS.maxv, maxVal.value);
+  force1dp.onchange=()=>localStorage.setItem(LS.force, force1dp.checked?"1":"0");
+
+  showWindows.onchange=()=>localStorage.setItem(LS.showW, showWindows.checked?"1":"0");
+  showDigitBoxes.onchange=()=>localStorage.setItem(LS.showB, showDigitBoxes.checked?"1":"0");
   stabilizeEl.onchange=()=>localStorage.setItem(LS.stab, stabilizeEl.checked?"1":"0");
   holdEl.onchange=()=>localStorage.setItem(LS.hold, holdEl.checked?"1":"0");
-  needFramesEl.oninput=()=>{localStorage.setItem(LS.nf,needFramesEl.value); syncLabels();}
-  needConfEl.oninput=()=>{localStorage.setItem(LS.nc,needConfEl.value); syncLabels();}
-  graceMsEl.oninput=()=>{localStorage.setItem(LS.gm,graceMsEl.value); syncLabels();}
-  minValEl.onchange=()=>localStorage.setItem(LS.minv,minValEl.value);
-  maxValEl.onchange=()=>localStorage.setItem(LS.maxv,maxValEl.value);
-  force1dpEl.onchange=()=>localStorage.setItem(LS.force, force1dpEl.checked?"1":"0");
-  wasmEl.onchange=()=>localStorage.setItem(LS.wasm, wasmEl.checked?"1":"0");
 
-  preModeEl.onchange=()=>localStorage.setItem(LS.premode, preModeEl.value);
-  autoInvEl.onchange=()=>localStorage.setItem(LS.autoinv, autoInvEl.checked?"1":"0");
-  norm01El.onchange=()=>localStorage.setItem(LS.norm01, norm01El.checked?"1":"0");
-  gammaEl.onchange=()=>localStorage.setItem(LS.gamma, gammaEl.value);
-  contrastEl.onchange=()=>localStorage.setItem(LS.contrast, contrastEl.value);
-  myEl.oninput=()=>{localStorage.setItem(LS.my, myEl.value); syncLabels();}
-
-  autoSplitEl.onchange=()=>localStorage.setItem(LS.autos, autoSplitEl.checked?"1":"0");
-  splitWEl.onchange=()=>localStorage.setItem(LS.splitw, splitWEl.value);
-  colPctEl.onchange=()=>localStorage.setItem(LS.colpct, colPctEl.value);
-  minRunEl.onchange=()=>localStorage.setItem(LS.minrun, minRunEl.value);
-  mergeGapEl.onchange=()=>localStorage.setItem(LS.mergegap, mergeGapEl.value);
+  const bindGuide=(el,key)=>{
+    el.addEventListener("input", ()=>{
+      GUIDE[key]=parseFloat(el.value);
+      if(key==="w") GUIDE.w=clamp(GUIDE.w,0.20,1);
+      if(key==="h") GUIDE.h=clamp(GUIDE.h,0.10,0.70);
+      GUIDE.x=clamp01(Math.min(GUIDE.x, 1-GUIDE.w));
+      GUIDE.y=clamp01(Math.min(GUIDE.y, 1-GUIDE.h));
+      saveGuide(); syncLabels();
+    });
+  };
+  bindGuide(gx,"x"); bindGuide(gy,"y"); bindGuide(gw,"w"); bindGuide(gh,"h");
 }
 persist();
 
-// camera list
+btnGuideReset.onclick=()=>{
+  GUIDE={x:0.18,y:0.44,w:0.64,h:0.20};
+  saveGuide();
+  applyGuideToUI();
+};
+
 function isBackLabel(label){ return /(back|rear|environment|背面|リア|後ろ)/i.test(label||""); }
+
 async function listCams({preserve=true,autoPickBack=true}={}){
   const prev=preserve?selCam.value:"";
   const saved=localStorage.getItem(LS.cam)||"";
@@ -386,7 +315,6 @@ async function listCams({preserve=true,autoPickBack=true}={}){
 }
 selCam.onchange=()=>localStorage.setItem(LS.cam, selCam.value||"");
 
-// start/stop
 async function startCamera(){
   await listCams({preserve:true,autoPickBack:false});
   try{
@@ -404,7 +332,6 @@ async function startCamera(){
     },
     audio:false
   });
-
   video.srcObject=stream;
   await video.play();
 
@@ -414,9 +341,7 @@ async function startCamera(){
   overlay.width=video.videoWidth;
   overlay.height=video.videoHeight;
 
-  setRoiBox();
   resetStabilizer();
-  buildDigitPreview();
   loop();
 }
 function stopCamera(){
@@ -427,9 +352,9 @@ function stopCamera(){
   btnStart.disabled=false;
   btnStop.disabled=true;
 
-  outEl.textContent="—";
-  candLine.textContent="候補: —";
-  dbgEl.textContent="";
+  out.textContent="—";
+  cand.textContent="候補: —";
+  dbg.textContent="";
   setLamp("yellow");
 }
 btnStart.onclick=async()=>{ try{ await startCamera(); }catch(e){ alert("カメラ開始失敗: "+(e?.message||e)); } };
@@ -442,275 +367,42 @@ selCam.onchange=async()=>{
   btnStart.onclick();
 };
 
-// helpers
-function toFixed1dp(text){
-  if(!force1dpEl.checked || !text) return text;
-  if(text.includes(".")) return text;
-  return text + ".0";
-}
-function passesGate(text){
-  if(!text) return false;
-  const v=parseFloat(text);
-  const minV=parseFloat(minValEl.value||"0"), maxV=parseFloat(maxValEl.value||"9999");
-  if(Number.isNaN(v)) return false;
-  if(v<minV || v>maxV) return false;
-  return true;
-}
-
-
-// ===== 7窓（構造）認識 =====
-// セグメント a,b,c,d,e,f,g の順で使う
-const SEG_PATTERNS = [
-  {ch:"0", bits:"1111110"},
-  {ch:"1", bits:"0110000"},
-  {ch:"2", bits:"1111101"},
-  {ch:"3", bits:"1111001"},
-  {ch:"4", bits:"0110011"},
-  {ch:"5", bits:"1011011"},
-  {ch:"6", bits:"1011111"},
-  {ch:"7", bits:"1110000"},
-  {ch:"8", bits:"1111111"},
-  {ch:"9", bits:"1111011"},
-  {ch:"-", bits:"0000001"},
-  {ch:"",  bits:"0000000"} // blank
-];
-
-// raw(0..1) から「セグ(インク)」を 1 にしたマスクを作る（濃い側/明るい側の少ない方を digit とみなす）
-function maskFromRaw(raw, W, H){
-  const thr = otsuThreshold(raw); // 0..1
-  let dark=0;
-  const N=raw.length;
-  for(let i=0;i<N;i++) if(raw[i]<thr) dark++;
-  const bright = N - dark;
-  const digitIsDark = dark < bright; // 少ない側=数字
-  const m = new Uint8Array(N);
-  if(digitIsDark){
-    for(let i=0;i<N;i++) m[i] = (raw[i]<thr)?1:0;
-  }else{
-    for(let i=0;i<N;i++) m[i] = (raw[i]>=thr)?1:0;
-  }
-  return {mask:m, thr, inkRatio: (digitIsDark?dark:bright)/N};
-}
-
-function dilateOnce(mask, W, H){
-  const out = new Uint8Array(mask.length);
-  for(let y=0;y<H;y++){
-    const yW=y*W;
-    for(let x=0;x<W;x++){
-      let v=0;
-      for(let dy=-1;dy<=1 && !v;dy++){
-        const yy=y+dy; if(yy<0||yy>=H) continue;
-        const yyW=yy*W;
-        for(let dx=-1;dx<=1;dx++){
-          const xx=x+dx; if(xx<0||xx>=W) continue;
-          if(mask[yyW+xx]){ v=1; break; }
-        }
-      }
-      out[yW+x]=v;
-    }
-  }
-  return out;
-}
-
-// セグメント窓（セグを“横断”する形の小領域）で、インク比を測る
-function segmentRatios(mask, W, H){
-  const rects = [
-    // a
-    [0.22,0.05, 0.78,0.18],
-    // b
-    [0.72,0.18, 0.92,0.46],
-    // c
-    [0.72,0.56, 0.92,0.84],
-    // d
-    [0.22,0.82, 0.78,0.95],
-    // e
-    [0.08,0.56, 0.28,0.84],
-    // f
-    [0.08,0.18, 0.28,0.46],
-    // g
-    [0.22,0.44, 0.78,0.56],
-  ];
-  const ratios = new Float32Array(7);
-  for(let i=0;i<7;i++){
-    let [x0,y0,x1,y1]=rects[i];
-    const ix0=Math.max(0, Math.min(W-1, Math.floor(x0*W)));
-    const ix1=Math.max(ix0+1, Math.min(W, Math.ceil(x1*W)));
-    const iy0=Math.max(0, Math.min(H-1, Math.floor(y0*H)));
-    const iy1=Math.max(iy0+1, Math.min(H, Math.ceil(y1*H)));
-    let sum=0, cnt=0;
-    for(let y=iy0;y<iy1;y++){
-      const yW=y*W;
-      for(let x=ix0;x<ix1;x++){
-        sum += mask[yW+x];
-        cnt++;
-      }
-    }
-    ratios[i]= cnt? (sum/cnt) : 0;
-  }
-  return ratios;
-}
-
-function scoreBits(bits, ratios){
-  let s=0;
-  for(let i=0;i<7;i++){
-    const b = bits.charCodeAt(i)===49; // '1'
-    const r = ratios[i];
-    s += b ? r : (1-r);
-  }
-  return s/7;
-}
-
-function classifyDigitBySegments(raw, W, H){
-  const {mask, thr, inkRatio} = maskFromRaw(raw, W, H);
-  const blankInk = parseFloat(segBlankInkEl.value||"0.02");
-  if(inkRatio < blankInk){
-    return {ch:"", conf:0.95, thr, inkRatio, ratios:null, best:0.95, second:0.0};
-  }
-
-  let m = mask;
-  if(segBoldEl.checked){
-    m = dilateOnce(m,W,H);
-  }
-  const ratios = segmentRatios(m,W,H);
-
-  let best = -1, second=-1, bestCh="?", bestBits=null;
-  for(const p of SEG_PATTERNS){
-    const sc = scoreBits(p.bits, ratios);
-    if(sc > best){ second=best; best=sc; bestCh=p.ch; bestBits=p.bits; }
-    else if(sc > second){ second=sc; }
-  }
-  const gap = Math.max(0, best - (second<0?0:second));
-  const conf = Math.max(0, Math.min(1, best * (0.65 + 0.35*Math.min(1, gap*3.0))));
-  return {ch:bestCh, conf, thr, inkRatio, ratios, best, second, bits:bestBits};
-}
-
-async function predictDigitsWithSegments(srcCanvas, nDigits){
-  const my = parseInt(myEl.value||"0",10);
-  const y0 = Math.floor(srcCanvas.height * (my/100));
-  const hh = Math.max(8, Math.floor(srcCanvas.height * (1 - 2*(my/100))));
-
-  const split = (autoSplitEl.checked? splitDigitsByProjection(srcCanvas, nDigits, y0, hh) : {boxes:null, dbg:"split=off"});
-  let useBoxes = split.boxes;
-  if(!useBoxes){
-    useBoxes=[];
-    const w = srcCanvas.width/nDigits;
-    for(let i=0;i<nDigits;i++) useBoxes.push({x:Math.floor(i*w), w:Math.floor(w), c:1.0});
-  }
-
-  const W=64, H=64;
-  let s="";
-  let minConf=1.0;
-  for(let i=0;i<nDigits;i++){
-    const pv = digCanvases[i];
-    const b = useBoxes[Math.min(i, useBoxes.length-1)];
-    const x0 = Math.max(0, Math.min(srcCanvas.width-1, b.x));
-    const ww = Math.max(2, Math.min(srcCanvas.width-x0, b.w));
-    const {raw} = cropDigitToArray(pv, srcCanvas, x0, y0, ww, hh, W, H);
-    const r = classifyDigitBySegments(raw, W, H);
-    const ch = r.ch;
-    s += (ch===""?"0":ch); // blankは0扱い（先頭0が付くだけで数値は同じ）
-    minConf = Math.min(minConf, r.conf);
-    digMeta[i].textContent = `#${i+1}: seg=${ch||"□"} p=${r.conf.toFixed(2)} ink=${(r.inkRatio*100).toFixed(1)}%`;
-  }
-  const text = toCandidateString(s);
-  return {text, conf:minConf, debug:`seg ${split.dbg} (minConf=${minConf.toFixed(2)})`};
-}
-
-function setGammaContrast(x){
-  const g = parseFloat(gammaEl.value||"1.0");
-  const c = parseFloat(contrastEl.value||"1.0");
-  let y = x;
-  if(g !== 1.0) y = Math.pow(Math.max(0,Math.min(1,y)), 1.0/g);
-  if(c !== 1.0) y = Math.max(0,Math.min(1,(y-0.5)*c + 0.5));
-  return y;
-}
 btnCopy.onclick=async()=>{
-  const t=stableText||outEl.textContent;
+  const t=stableText||out.textContent;
   if(!t||t==="—") return;
   try{ await navigator.clipboard.writeText(t); }
   catch(_){ prompt("コピーして使ってください:", t); }
 };
 
-// ===== ML model (digit classifier) =====
-let model=null;
-let modelReady=false;
+// ====== 7セグ辞書（a b c d e f g） ======
+const DIGIT_MAP = new Map([
+  ["1111110","0"],
+  ["0110000","1"],
+  ["1101101","2"],
+  ["1111001","3"],
+  ["0110011","4"],
+  ["1011011","5"],
+  ["1011111","6"],
+  ["1110000","7"],
+  ["1111111","8"],
+  ["1111011","9"],
+]);
 
-async function initTF(){
-  try{
-    if(wasmEl.checked){
-      const wasmPath = "https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-wasm@4.20.0/dist/";
-      tf.wasm.setWasmPaths(wasmPath);
-      await tf.setBackend("wasm");
-    }else{
-      await tf.setBackend("webgl");
-    }
-    await tf.ready();
-    return true;
-  }catch(e){
-    console.log(e);
-    return false;
-  }
-}
-async function loadModel(url){
-  mlStateEl.textContent="ml: loading…";
-  const ok = await initTF();
-  if(!ok){ mlStateEl.textContent="ml: tf init failed"; return false; }
-  try{
-    model = await tf.loadLayersModel(url, {strict:true});
-    const ish = model.inputs[0].shape; // [null,h,w,1]
-    const h = ish[1]||32, w = ish[2]||32;
-    tf.tidy(()=>model.predict(tf.zeros([1,h,w,1])).dispose());
-    modelReady=true;
-    mlStateEl.textContent=`ml: ready (backend=${tf.getBackend()} url=${url})`;
-    return true;
-  }catch(e){
-    modelReady=false;
-    mlStateEl.textContent="ml: load failed: "+(e?.message||e);
-    return false;
-  }
-}
-btnLoadModel.onclick=async()=>{
-  const url = localStorage.getItem(LS.model) || "./model/model.json";
-  const ok = await loadModel(url);
-  if(ok) localStorage.setItem(LS.model, url);
-};
+function clampInt(v,a,b){ v=v|0; return Math.max(a,Math.min(b,v)); }
 
-// ==== digit preview UI ====
-let digCanvases=[], digMeta=[];
-function buildDigitPreview(){
-  const n = parseInt(digitsEl.value,10);
-  digPrev.innerHTML="";
-  digCanvases=[]; digMeta=[];
-  for(let i=0;i<n;i++){
-    const card=document.createElement("div");
-    card.className="digcard";
-    const c=document.createElement("canvas");
-    c.width=64; c.height=64;
-    const m=document.createElement("div");
-    m.className="digmeta mono";
-    m.textContent=`#${i+1}: —`;
-    card.appendChild(c);
-    card.appendChild(m);
-    digPrev.appendChild(card);
-    digCanvases.push(c);
-    digMeta.push(m);
-  }
-}
-
-// ===== preprocessing utilities =====
-function otsuThreshold(grayArr){
+// ====== Otsu ======
+function otsuThreshold(gray){
   const hist = new Uint32Array(256);
-  for(let i=0;i<grayArr.length;i++){
-    const v = Math.max(0, Math.min(255, (grayArr[i]*255)|0));
+  for(let i=0;i<gray.length;i++){
+    const v = clampInt(gray[i],0,255);
     hist[v]++;
   }
-  const total = grayArr.length;
+  const total = gray.length;
   let sum=0;
   for(let i=0;i<256;i++) sum += i*hist[i];
 
   let sumB=0, wB=0, wF=0;
-  let varMax=0, threshold=128;
-
+  let varMax=0, thr=128;
   for(let t=0;t<256;t++){
     wB += hist[t];
     if(wB===0) continue;
@@ -719,370 +411,277 @@ function otsuThreshold(grayArr){
     sumB += t*hist[t];
     const mB = sumB / wB;
     const mF = (sum - sumB) / wF;
-    const varBetween = wB*wF*(mB-mF)*(mB-mF);
-    if(varBetween > varMax){
-      varMax = varBetween;
-      threshold = t;
-    }
+    const vb = wB*wF*(mB-mF)*(mB-mF);
+    if(vb > varMax){ varMax = vb; thr = t; }
   }
-  return threshold/255.0;
+  return thr;
 }
 
-function grayFromCanvas(cnv){
-  const ctx = cnv.getContext("2d",{willReadFrequently:true});
-  const {width:w,height:h}=cnv;
-  const d = ctx.getImageData(0,0,w,h).data;
-  const arr = new Float32Array(w*h);
-  for(let i=0,p=0;i<arr.length;i++,p+=4){
-    const r=d[p], g=d[p+1], b=d[p+2];
-    let x = (0.299*r + 0.587*g + 0.114*b) / 255.0;
-    x = setGammaContrast(x);
-    arr[i]=x;
+function binarize(imageData, w, h){
+  const d=imageData.data;
+  const g=new Uint8Array(w*h);
+  for(let i=0,p=0;i<g.length;i++,p+=4){
+    const r=d[p], gg=d[p+1], b=d[p+2];
+    g[i] = (0.299*r + 0.587*gg + 0.114*b) | 0;
   }
-  return {arr,w,h};
-}
 
-// 自動桁分割：縦投影で“インクのある列”を run-length で抽出
-function autoSplitBoxes(srcCanvas, nDigits){
-  // scale ROI to manageable width
-  const targetW = Math.max(120, Math.min(600, parseInt(splitWEl.value||"320",10)));
-  const scale = targetW / srcCanvas.width;
-  const w = targetW;
-  const h = Math.max(40, Math.floor(srcCanvas.height * scale));
-  seg.width=w; seg.height=h;
-  ctxS.imageSmoothingEnabled = true;
-  ctxS.clearRect(0,0,w,h);
-  ctxS.drawImage(srcCanvas, 0,0, srcCanvas.width, srcCanvas.height, 0,0, w,h);
+  let thr=128;
+  if(autoOtsu.checked){
+    thr = otsuThreshold(g);
+    thr = clampInt(thr + (parseInt(otsuOff.value||"0",10)||0), 0, 255);
+  }else{
+    thr = clampInt(parseInt(otsuOff.value||"128",10)||128, 0, 255);
+  }
 
-  const {arr:gray} = grayFromCanvas(seg);
-
-  // decide invert for segmentation
-  let doInv = autoInvEl.checked && (gray.reduce((a,b)=>a+b,0)/gray.length > 0.62);
-
-  // binarize for projection
-  const thr = otsuThreshold(gray);
-  const bin = new Uint8Array(gray.length);
-  for(let i=0;i<gray.length;i++){
-    let v = (gray[i] < thr) ? 1 : 0; // dark=ink
-    if(doInv) v = 1 - v;
+  const bin=new Uint8Array(w*h);
+  const inv=invertEl.checked;
+  for(let i=0;i<g.length;i++){
+    let v = (g[i] < thr) ? 1 : 0; // dark=ink
+    if(inv) v = 1 - v;
     bin[i]=v;
   }
 
-  const colPct = parseFloat(colPctEl.value||"6.0")/100.0; // percent of rows
-  const colMin = Math.max(1, Math.floor(h * colPct));
-
-  const colSum = new Uint16Array(w);
-  for(let x=0;x<w;x++){
-    let s=0;
-    for(let y=0;y<h;y++){
-      s += bin[y*w + x];
-    }
-    colSum[x]=s;
-  }
-
-  // active columns
-  const active = new Uint8Array(w);
-  for(let x=0;x<w;x++) active[x] = colSum[x] >= colMin ? 1 : 0;
-
-  // runs
-  const runs=[];
-  let x=0;
-  while(x<w){
-    while(x<w && !active[x]) x++;
-    if(x>=w) break;
-    let x1=x;
-    while(x<w && active[x]) x++;
-    let x2=x-1;
-    runs.push([x1,x2]);
-  }
-
-  // filter tiny
-  const minRun = Math.max(2, parseInt(minRunEl.value||"10",10));
-  let filtered = runs.filter(r => (r[1]-r[0]+1) >= minRun);
-
-  // merge near gaps (digit might be split by inner hole)
-  const mergeGap = Math.max(0, parseInt(mergeGapEl.value||"6",10));
-  const merged=[];
-  for(const r of filtered){
-    if(!merged.length){ merged.push(r.slice()); continue; }
-    const last=merged[merged.length-1];
-    if(r[0]-last[1] <= mergeGap){
-      last[1]=r[1];
-    }else{
-      merged.push(r.slice());
+  if(dilate.checked){
+    const n=clampInt(parseInt(dilateN.value||"1",10),1,3);
+    for(let it=0;it<n;it++){
+      const src=bin.slice();
+      for(let y=1;y<h-1;y++){
+        for(let x=1;x<w-1;x++){
+          const i=y*w+x;
+          if(src[i]) continue;
+          if(src[i-1]||src[i+1]||src[i-w]||src[i+w]||src[i-w-1]||src[i-w+1]||src[i+w-1]||src[i+w+1]){
+            bin[i]=1;
+          }
+        }
+      }
     }
   }
 
-  // if too many, keep widest nDigits (ignore small text like "kg")
-  let chosen = merged;
-  if(chosen.length > nDigits){
-    chosen = chosen
-      .map(r=>({r, w:(r[1]-r[0]+1)}))
-      .sort((a,b)=>b.w-a.w)
-      .slice(0,nDigits)
-      .map(o=>o.r)
-      .sort((a,b)=>a[0]-b[0]);
-  }
-
-  // if too few, fallback equal split
-  if(chosen.length < nDigits){
-    const ww = srcCanvas.width;
-    const step = ww / nDigits;
-    const boxes=[];
-    for(let i=0;i<nDigits;i++){
-      const x1=Math.floor(i*step);
-      const x2=Math.floor((i+1)*step)-1;
-      boxes.push([x1,x2]);
-    }
-    return {boxes, debug:`split=fallback runs=${merged.length}`};
-  }
-
-  // map back to original srcCanvas coords
-  const boxes = chosen.map(r=>{
-    const x1 = Math.floor(r[0] / scale);
-    const x2 = Math.floor((r[1]+1) / scale) - 1;
-    return [clamp(x1,0,srcCanvas.width-1), clamp(x2,0,srcCanvas.width-1)];
-  });
-
-  return {boxes, debug:`split=auto runs=${merged.length} used=${boxes.length} inv=${doInv?1:0}`};
+  return {bin, thr};
 }
 
-// digit crop → tensor + preview
-function cropDigitToArray(previewCanvas, srcCanvas, sx, sy, sw, sh, outW, outH){
-  const pctx = previewCanvas.getContext("2d",{willReadFrequently:true});
-  pctx.imageSmoothingEnabled = false;
-  pctx.clearRect(0,0,previewCanvas.width,previewCanvas.height);
-  pctx.drawImage(srcCanvas, sx,sy,sw,sh, 0,0, previewCanvas.width, previewCanvas.height);
-
-  dig.width=outW; dig.height=outH;
-  ctxD.imageSmoothingEnabled = true;
-  ctxD.clearRect(0,0,outW,outH);
-  ctxD.drawImage(srcCanvas, sx,sy,sw,sh, 0,0,outW,outH);
-
-  const d = ctxD.getImageData(0,0,outW,outH).data;
-  const arr = new Float32Array(outW*outH);
-  for(let i=0,p=0;i<arr.length;i++,p+=4){
-    const r=d[p], g=d[p+1], b=d[p+2];
-    let x = (0.299*r + 0.587*g + 0.114*b) / 255.0;
-    x = setGammaContrast(x);
-    arr[i]=x;
+function blackRatio(bin, w, x0,y0,x1,y1){
+  x0=clampInt(Math.floor(x0),0,w-1);
+  x1=clampInt(Math.floor(x1),0,w);
+  y0=Math.max(0,Math.floor(y0));
+  y1=Math.max(0,Math.floor(y1));
+  if(x1<=x0||y1<=y0) return 0;
+  let sum=0, cnt=0;
+  for(let y=y0;y<y1;y++){
+    const row=y*w;
+    for(let x=x0;x<x1;x++){
+      sum += bin[row+x];
+      cnt++;
+    }
   }
+  return cnt? (sum/cnt) : 0;
+}
 
-  // apply preMode on model input
-  const mean = arr.reduce((a,b)=>a+b,0)/arr.length;
-  let doAutoInvert = autoInvEl.checked && (mean > 0.62);
-  let preMode = preModeEl.value;
-  if(preMode==="invert") doAutoInvert = true;
+function guideRect(){
+  const w=overlay.width, h=overlay.height;
+  const x=Math.floor(GUIDE.x*w);
+  const y=Math.floor(GUIDE.y*h);
+  const ww=Math.floor(GUIDE.w*w);
+  const hh=Math.floor(GUIDE.h*h);
+  return {x,y,w:ww,h:hh};
+}
 
-  if(preMode==="otsu" || preMode==="otsu_inv"){
-    const thr = otsuThreshold(arr);
-    for(let i=0;i<arr.length;i++) arr[i] = (arr[i] < thr) ? 1.0 : 0.0;
-    if(preMode==="otsu_inv") doAutoInvert = !doAutoInvert;
-  }
-  if(doAutoInvert){
-    for(let i=0;i<arr.length;i++) arr[i] = 1.0 - arr[i];
-  }
+// ====== 7窓（1桁内の相対位置） ======
+function segWindowsForDigit(dx,dy,dw,dh){
+  const th = 0.16;
+  const vw = 0.18;
+  const pad = 0.08;
+  const mid = 0.50;
 
-  // norm
-  if(!norm01El.checked){
-    for(let i=0;i<arr.length;i++) arr[i] = arr[i]*255.0; // rarely needed
-  }
-  return {arr, mean, inv:doAutoInvert?1:0};
+  const x0=dx, y0=dy, x1=dx+dw, y1=dy+dh;
+  const px = dw*pad, py = dh*pad;
+
+  const hh = dh*th;
+  const ww = dw*vw;
+
+  const a = {x: x0+px, y: y0+py, w: dw-2*px, h: hh};
+  const d = {x: x0+px, y: y1-py-hh, w: dw-2*px, h: hh};
+  const g = {x: x0+px, y: y0 + dh*mid - hh/2, w: dw-2*px, h: hh};
+
+  const f = {x: x0+px, y: y0+py, w: ww, h: dh*0.45};
+  const e = {x: x0+px, y: y0+dh*0.55, w: ww, h: dh*0.45-py};
+
+  const b = {x: x1-px-ww, y: y0+py, w: ww, h: dh*0.45};
+  const c = {x: x1-px-ww, y: y0+dh*0.55, w: ww, h: dh*0.45-py};
+
+  return {a,b,c,d,e,f,g};
 }
 
 function toCandidateString(s){
   if(decEl.value==="last"){
     if(s.length>=2) s = s.slice(0,-1) + "." + s.slice(-1);
-    const v=parseFloat(s);
-    if(!Number.isNaN(v)) s = v.toFixed(1);
   }
-  s = toFixed1dp(s);
+  if(force1dp.checked && s && !s.includes(".")) s = s + ".0";
   return s;
 }
 
-async function predictDigitsWithModel(srcCanvas, nDigits){
-  if(!modelReady) return {text:null, conf:0, debug:"ml-not-ready"};
-  const ish = model.inputs[0].shape;
-  const H = ish[1]||32, W = ish[2]||32;
+function passesGate(text){
+  if(!text) return false;
+  const v=parseFloat(text);
+  if(Number.isNaN(v)) return false;
+  const mn=parseFloat(minVal.value||"0"), mx=parseFloat(maxVal.value||"9999");
+  return v>=mn && v<=mx;
+}
 
-  const w0 = srcCanvas.width, h0 = srcCanvas.height;
-  const my = Math.floor(h0 * (parseInt(myEl.value,10)/100));
-  const y0 = my;
-  const hh = Math.max(10, h0 - my*2);
+function recognize(){
+  const r=guideRect();
+  work.width=r.w; work.height=r.h;
+  ctxW.drawImage(video, r.x, r.y, r.w, r.h, 0,0, r.w, r.h);
 
-  // decide x boxes
-  let boxes, splitDebug;
-  if(autoSplitEl.checked){
-    const res = autoSplitBoxes(srcCanvas, nDigits);
-    boxes = res.boxes;
-    splitDebug = res.debug;
-  }else{
-    const step = w0 / nDigits;
-    boxes = Array.from({length:nDigits}, (_,i)=>[Math.floor(i*step), Math.floor((i+1)*step)-1]);
-    splitDebug = "split=equal";
-  }
+  const img=ctxW.getImageData(0,0,r.w,r.h);
+  const {bin, thr}=binarize(img, r.w, r.h);
 
-  // run inference per digit
-  let s="", confs=[];
-  let invAny=0;
+  const nDigits=parseInt(digitsEl.value,10);
+  const step=r.w / nDigits;
+
+  const segT=parseFloat(segThr.value);
+  const blankT=parseFloat(blankThr.value);
+
+  let outStr="";
+  const perDigitDbg=[];
   for(let i=0;i<nDigits;i++){
-    const [x1,x2]=boxes[i];
-    const dw = Math.max(2, x2-x1+1);
-    const sx = x1;
+    const dx=i*step, dw=step, dy=0, dh=r.h;
 
-    const preview = digCanvases[i];
-    const {arr, inv} = cropDigitToArray(preview, srcCanvas, sx, y0, dw, hh, W, H);
-    invAny |= inv;
+    const inkAll = blackRatio(bin, r.w, dx, dy, dx+dw, dy+dh);
+    if(inkAll < blankT){
+      perDigitDbg.push(`#${i+1}: blank ink=${inkAll.toFixed(2)}`);
+      continue;
+    }
 
-    const t = tf.tensor4d(arr, [1,H,W,1]);
-    const p = tf.tidy(()=>{
-      const y = model.predict(t);
-      const a = y.dataSync();
-      return Array.from(a);
-    });
-    t.dispose();
-
-    let bestI=0, bestV=p[0];
-    for(let k=1;k<p.length;k++){ if(p[k]>bestV){bestV=p[k]; bestI=k;} }
-
-    // class 10 = blank（学習に入れている前提）
-    if(bestI===10) s += ""; else s += String(bestI);
-    confs.push(bestV);
-    digMeta[i].textContent = `#${i+1}: cls=${bestI} p=${bestV.toFixed(2)} box=[${x1},${x2}]`;
+    const w7=segWindowsForDigit(dx,dy,dw,dh);
+    const bits=[];
+    for(const key of ["a","b","c","d","e","f","g"]){
+      const ww=w7[key];
+      const ink=blackRatio(bin, r.w, ww.x, ww.y, ww.x+ww.w, ww.y+ww.h);
+      bits.push(ink >= segT ? "1":"0");
+    }
+    const pat=bits.join("");
+    const digit = DIGIT_MAP.get(pat) ?? "?";
+    outStr += digit;
+    perDigitDbg.push(`#${i+1}: ${digit} pat=${pat} ink=${inkAll.toFixed(2)}`);
   }
 
-  let text = toCandidateString(s);
-  const ok=/^[0-9]+(\.[0-9]+)?$/.test(text);
-  const conf = confs.length ? confs.reduce((a,b)=>a+b,0)/confs.length : 0;
-  return {text: ok?text:null, conf, debug:`${splitDebug} premode=${preModeEl.value} invAny=${invAny}`};
+  const candText = (/^[0-9?]+$/.test(outStr) && outStr.length>0) ? toCandidateString(outStr) : null;
+
+  let conf=0;
+  if(outStr && outStr.length){
+    const okc=[...outStr].filter(ch=>ch!=="?").length;
+    conf = okc / outStr.length;
+  }
+
+  return {text:candText, conf, thr, debug:perDigitDbg.join(" | ")};
 }
 
-// ===== stabilizer =====
-let lastCand=null, consec=0, stableText=null, stableConf=0, lastOkAt=0;
-function resetStabilizer(){ lastCand=null; consec=0; stableText=null; stableConf=0; lastOkAt=0; setLamp("yellow"); }
+// ====== 安定化 ======
+let lastCand=null, consec=0, stableText=null, lastOkAt=0;
+function resetStabilizer(){ lastCand=null; consec=0; stableText=null; lastOkAt=0; setLamp("yellow"); }
 
-// ===== loop =====
-let lastAnalyzeAt=0;
-function loop(){
-  const now=performance.now();
-  const interval=parseInt(anMsEl.value,10);
+function applyCandidate(candidate, conf, thr, debug){
+  cand.textContent = `候補: ${candidate ?? "—"} (conf=${conf.toFixed(2)} thr=${thr})`;
+  const need=parseInt(needFrames.value,10);
+  const grace=parseInt(graceMs.value,10);
 
-  ctxO.clearRect(0,0,overlay.width,overlay.height);
-
-  const rx=Math.floor(ROI.x*overlay.width);
-  const ry=Math.floor(ROI.y*overlay.height);
-  const rw=Math.floor(ROI.w*overlay.width);
-  const rh=Math.floor(ROI.h*overlay.height);
-
-  ctxO.strokeStyle='rgba(255,0,0,.95)'; ctxO.lineWidth=3;
-  ctxO.strokeRect(rx+1,ry+1,rw-2,rh-2);
-
-  if(now-lastAnalyzeAt < interval){
-    rafId=requestAnimationFrame(loop);
-    return;
-  }
-  lastAnalyzeAt=now;
-
-  work.width=rw; work.height=rh;
-  ctxW.drawImage(video, rx, ry, rw, rh, 0, 0, rw, rh);
-
-  const nd=parseInt(digitsEl.value,10);
-
-  if(inflight){
-    rafId=requestAnimationFrame(loop);
-    return;
-  }
-  inflight=true;
-
-  const needFallback = parseFloat(segFallbackEl.value||"0.55");
-
-  if(useSegEl.checked){
-    predictDigitsWithSegments(work, nd).then(segRes=>{
-      if(useMLEl.checked && modelReady && (!segRes.text || segRes.conf < needFallback)){
-        return predictDigitsWithModel(work, nd).then(mlRes=>{
-          applyCandidate(mlRes.text, mlRes.conf, `ml | ${mlRes.debug} (seg conf=${segRes.conf.toFixed(2)})`);
-        });
-      }else{
-        applyCandidate(segRes.text, segRes.conf, `seg | ${segRes.debug}`);
-      }
-    }).catch(e=>{
-      console.warn("seg err", e);
-      if(useMLEl.checked && modelReady){
-        predictDigitsWithModel(work, nd).then(mlRes=>{
-          applyCandidate(mlRes.text, mlRes.conf, `ml | ${mlRes.debug} (seg err)`);
-        }).catch(err2=>{
-          console.warn("ml err", err2);
-          applyCandidate(null,0,`err seg+ml`);
-        });
-      }else{
-        applyCandidate(null,0,`err seg`);
-      }
-    }).finally(()=>{ inflight=false; });
-  }else if(useMLEl.checked && modelReady){
-    predictDigitsWithModel(work, nd).then(res=>{
-      applyCandidate(res.text, res.conf, `ml | ${res.debug}`);
-    }).catch(e=>{
-      console.warn("ml err", e);
-      applyCandidate(null,0,`err ml`);
-    }).finally(()=>{ inflight=false; });
-  }else{
-    applyCandidate(null,0,`no recognizer`);
-    inflight=false;
-  }
-
-  rafId=requestAnimationFrame(loop);
-}
-
-function applyCandidate(candidate, conf, debug){
-  candLine.textContent = `候補: ${candidate ?? "—"} (conf=${conf.toFixed(2)} / ${debug})`;
-
-  const needFrames=parseInt(needFramesEl.value,10);
-  const needConf=parseFloat(needConfEl.value);
-  const graceMs=parseInt(graceMsEl.value,10);
-
-  let acceptable = (candidate !== null) && (conf >= needConf) && passesGate(candidate);
+  const acceptable = (candidate !== null) && (conf >= 0.75) && passesGate(candidate);
 
   if(acceptable){
-    lastOkAt = performance.now();
-    if(candidate === lastCand) consec++;
+    lastOkAt=performance.now();
+    if(candidate===lastCand) consec++;
     else { lastCand=candidate; consec=1; }
 
     if(!stabilizeEl.checked){
-      stableText=candidate; stableConf=conf; outEl.textContent=stableText; setLamp("green");
+      stableText=candidate; out.textContent=stableText; setLamp("green");
     }else{
-      if(consec >= needFrames){
-        stableText=candidate; stableConf=conf; outEl.textContent=stableText; setLamp("green");
+      if(consec>=need){
+        stableText=candidate; out.textContent=stableText; setLamp("green");
       }else{
-        if(!holdEl.checked) outEl.textContent="—";
-        else if(stableText) outEl.textContent=stableText;
+        if(!holdEl.checked) out.textContent="—";
+        else if(stableText) out.textContent=stableText;
         setLamp("yellow");
       }
     }
   }else{
     lastCand=null; consec=0;
     const now=performance.now();
-    const withinGrace = stableText && (now - lastOkAt) <= graceMs;
+    const withinGrace = stableText && (now - lastOkAt) <= grace;
     if(withinGrace && holdEl.checked){
-      outEl.textContent=stableText;
+      out.textContent=stableText;
       setLamp("green");
     }else{
-      if(!holdEl.checked) outEl.textContent="—";
-      else if(stableText) outEl.textContent=stableText;
+      if(!holdEl.checked) out.textContent="—";
+      else if(stableText) out.textContent=stableText;
       setLamp("yellow");
     }
   }
 
   const camLabel = selCam.selectedOptions?.[0]?.textContent || "";
-  dbgEl.textContent =
-    `ml=${useMLEl.checked?1:0} ready=${modelReady?1:0} ${debug} | `+
-    `conf=${conf.toFixed(2)} needConf=${Number(needConfEl.value).toFixed(2)} `+
-    `stable=${stabilizeEl.checked?1:0} consec=${consec}/${needFrames} grace=${graceMs}ms | cam="${camLabel}"`;
+  dbg.textContent =
+    `mode=7windows | digits=${digitsEl.value} inv=${invertEl.checked?1:0} otsu=${autoOtsu.checked?1:0} off=${otsuOff.value} `+
+    `dil=${dilate.checked?1:0} n=${dilateN.value} segThr=${Number(segThr.value).toFixed(2)} blankThr=${Number(blankThr.value).toFixed(3)} | `+
+    `stable=${stabilizeEl.checked?1:0} consec=${consec}/${need} grace=${grace}ms | cam="${camLabel}"
+`+
+    debug;
 }
 
-// init
+function drawOverlay(){
+  ctxO.clearRect(0,0,overlay.width,overlay.height);
+
+  const r=guideRect();
+  ctxO.strokeStyle="rgba(255,0,0,.95)";
+  ctxO.lineWidth=3;
+  ctxO.strokeRect(r.x+1,r.y+1,r.w-2,r.h-2);
+
+  const nDigits=parseInt(digitsEl.value,10);
+  const step=r.w/nDigits;
+
+  if(showDigitBoxes.checked){
+    ctxO.strokeStyle="rgba(255,0,0,.55)";
+    ctxO.lineWidth=2;
+    for(let i=1;i<nDigits;i++){
+      const x=r.x + i*step;
+      ctxO.beginPath(); ctxO.moveTo(x,r.y); ctxO.lineTo(x,r.y+r.h); ctxO.stroke();
+    }
+  }
+
+  if(showWindows.checked){
+    ctxO.fillStyle="rgba(255,255,0,.22)";
+    ctxO.strokeStyle="rgba(255,255,0,.55)";
+    ctxO.lineWidth=1;
+    for(let i=0;i<nDigits;i++){
+      const dx=r.x + i*step;
+      const dy=r.y;
+      const dw=step;
+      const dh=r.h;
+      const w7=segWindowsForDigit(dx,dy,dw,dh);
+      for(const k of ["a","b","c","d","e","f","g"]){
+        const w=w7[k];
+        ctxO.fillRect(w.x,w.y,w.w,w.h);
+        ctxO.strokeRect(w.x+0.5,w.y+0.5,w.w-1,w.h-1);
+      }
+    }
+  }
+}
+
+function loop(){
+  const now=performance.now();
+  drawOverlay();
+
+  const interval=parseInt(anMs.value,10);
+  if(now-lastAnalyzeAt >= interval && stream){
+    lastAnalyzeAt=now;
+    const res=recognize();
+    applyCandidate(res.text, res.conf, res.thr, res.debug);
+  }
+  rafId=requestAnimationFrame(loop);
+}
+
 navigator.mediaDevices?.addEventListener?.('devicechange', ()=>listCams({preserve:true,autoPickBack:true}));
 listCams({preserve:true,autoPickBack:true}).catch(()=>{});
-setRoiBox(); syncLabels(); buildDigitPreview(); setLamp("yellow"); resetStabilizer();
+syncLabels();
 </script>
 </body>
 </html>
