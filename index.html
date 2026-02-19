@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>7セグ読み取り v19（7窓のみ・横断窓）</title>
+<title>7セグ読み取り v20（7窓・横断窓＋角度）</title>
 <style>
   body{font-family:system-ui,-apple-system,sans-serif;margin:0;background:#111;color:#eee}
-  .wrap{max-width:1100px;margin:0 auto;padding:10px;display:flex;flex-direction:column;gap:10px}
+  .wrap{max-width:1120px;margin:0 auto;padding:10px;display:flex;flex-direction:column;gap:10px}
   .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
   button,select,input{font-size:16px;padding:8px 10px}
   .btn{background:#2a2a2a;border:1px solid #3a3a3a;color:#fff;border-radius:10px}
@@ -43,7 +43,7 @@
     <span class="chip"><input id="lockBack" type="checkbox" checked>背面固定</span>
 
     <label>解析(ms)</label>
-    <input id="anMs" type="range" min="80" max="400" step="10" value="160">
+    <input id="anMs" type="range" min="80" max="450" step="10" value="160">
     <span id="anMsVal" class="mono">160</span>
 
     <label>桁</label>
@@ -63,15 +63,19 @@
   </div>
 
   <details open>
-    <summary>合わせ込み（横断窓ガイド）</summary>
+    <summary>合わせ込み（横断窓ガイド＋角度）</summary>
     <div class="hint" style="margin-top:8px">
-      画面に表示される <b>4桁分の横断窓</b>（細い枠）に、体重計の表示窓を<b>ぴったり重ねて</b>ください。
-      これがズレると誤読します。
+      体重計の表示が斜めなら <b>角度(°)</b> を調整して、黄色の窓がセグを<b>横断（垂直に刺さる）</b>ように合わせます。<br>
+      角度は ROI 内だけに効きます（表示窓に合わせた後は固定推奨）。
     </div>
+    <div class="kv"><label>角度（°）</label><input id="ang" type="range" min="-20" max="20" step="0.5" value="0"><span id="angv" class="mono">0.0</span></div>
+    <div class="kv"><label>窓サイズ倍率</label><input id="winScale" type="range" min="0.60" max="1.60" step="0.05" value="1.00"><span id="winScaleVal" class="mono">1.00</span></div>
+
     <div class="kv"><label>ガイドX（%）</label><input id="gx" type="range" min="0" max="1" step="0.01"><span id="gxv"></span></div>
     <div class="kv"><label>ガイドY（%）</label><input id="gy" type="range" min="0" max="1" step="0.01"><span id="gyv"></span></div>
     <div class="kv"><label>ガイドW（%）</label><input id="gw" type="range" min="0.20" max="1" step="0.01"><span id="gwv"></span></div>
     <div class="kv"><label>ガイドH（%）</label><input id="gh" type="range" min="0.10" max="0.70" step="0.01"><span id="ghv"></span></div>
+
     <div class="row" style="margin-top:8px">
       <button id="btnGuideReset" class="btn" type="button">ガイド初期化</button>
       <span class="chip"><input id="showWindows" type="checkbox" checked>横断窓を表示</span>
@@ -82,19 +86,17 @@
   <details open>
     <summary>前処理（軽い・iPhone向け）</summary>
     <div class="row" style="margin-top:8px">
-      <span class="chip"><input id="invert" type="checkbox" checked>反転（黒数字用）</span>
+      <span class="chip"><input id="invert" type="checkbox">反転（白数字用）</span>
       <span class="chip"><input id="autoOtsu" type="checkbox" checked>自動2値化（Otsu）</span>
       <span class="chip">Otsuオフセット <input id="otsuOff" class="smallinp" type="number" step="1" value="-15"></span>
       <span class="chip"><input id="dilate" type="checkbox" checked>太らせる（細いセグ対策）</span>
       <span class="chip">太さ <input id="dilateN" class="smallinp" type="number" min="1" max="3" value="1"></span>
-      <span class="chip">窓サイズ倍率 <input id="winScale" type="range" min="0.60" max="1.80" step="0.05" value="1.00" style="width:140px"></span>
-      <span id="winScaleVal" class="mono">1.00</span>
     </div>
-    <div class="kv"><label>セグ判定しきい値（黒率）</label><input id="segThr" type="range" min="0.10" max="0.60" step="0.01" value="0.28"><span id="segThrVal"></span></div>
+    <div class="kv"><label>セグ判定しきい値（黒率）</label><input id="segThr" type="range" min="0.08" max="0.55" step="0.01" value="0.22"><span id="segThrVal"></span></div>
     <div class="kv"><label>空白判定（全体黒率）</label><input id="blankThr" type="range" min="0.00" max="0.10" step="0.005" value="0.02"><span id="blankThrVal"></span></div>
     <div class="hint" style="margin-top:8px">
-      ・黒数字（明るい背景）なら <b>反転ON</b> が基本。<br>
-      ・読めない時は、まず <b>seg判定</b> を 0.22〜0.38 で調整 → 次に Otsuオフセット（-40〜+20）。<br>
+      ・黒数字（明るい背景）なら <b>反転OFF</b> が基本（「黒が入ればON」）。<br>
+      ・読めない時は、まず <b>セグ判定</b> を 0.16〜0.30 → 次に Otsuオフセット（-40〜+20）。<br>
     </div>
   </details>
 
@@ -123,31 +125,32 @@
         <button id="btnCopy" class="btn" type="button">確定値をコピー</button>
       </div>
       <div class="hint" style="margin-top:8px">
-        コツ：ガイド（赤）に表示窓を合わせたら、以後は体重計とiPhoneを固定。<br>
-        それでもチラつくなら「確定に必要な連続フレーム」を 8〜12 に。
+        まず角度を合わせる → ROIを表示窓に合わせる → セグ判定しきい値を微調整、の順が一番速いです。
       </div>
     </div>
   </div>
 
-  <canvas id="work" style="display:none"></canvas>
+  <canvas id="roi" style="display:none"></canvas>
+  <canvas id="upr" style="display:none"></canvas>
 </div>
 
 <script>
 const $=id=>document.getElementById(id);
-const video=$("video"), overlay=$("overlay"), work=$("work");
+const video=$("video"), overlay=$("overlay"), roi=$("roi"), upr=$("upr");
 const ctxO=overlay.getContext("2d",{willReadFrequently:true});
-const ctxW=work.getContext("2d",{willReadFrequently:true});
+const ctxR=roi.getContext("2d",{willReadFrequently:true});
+const ctxU=upr.getContext("2d",{willReadFrequently:true});
 
 const btnStart=$("btnStart"), btnStop=$("btnStop"), selCam=$("selCam"), lockBack=$("lockBack");
 const anMs=$("anMs"), anMsVal=$("anMsVal"), digitsEl=$("digits"), decEl=$("decimal");
 const stabilizeEl=$("stabilize"), holdEl=$("hold");
+const ang=$("ang"), angv=$("angv"), winScale=$("winScale"), winScaleVal=$("winScaleVal");
 
 const gx=$("gx"), gy=$("gy"), gw=$("gw"), gh=$("gh");
 const gxv=$("gxv"), gyv=$("gyv"), gwv=$("gwv"), ghv=$("ghv");
 const btnGuideReset=$("btnGuideReset"), showWindows=$("showWindows"), showDigitBoxes=$("showDigitBoxes");
 
 const invertEl=$("invert"), autoOtsu=$("autoOtsu"), otsuOff=$("otsuOff"), dilate=$("dilate"), dilateN=$("dilateN");
-const winScale=$("winScale"), winScaleVal=$("winScaleVal");
 const segThr=$("segThr"), segThrVal=$("segThrVal"), blankThr=$("blankThr"), blankThrVal=$("blankThrVal");
 
 const needFrames=$("needFrames"), needFramesVal=$("needFramesVal"), graceMs=$("graceMs"), graceMsVal=$("graceMsVal");
@@ -160,27 +163,28 @@ let stream=null, rafId=null, lastAnalyzeAt=0;
 const LS={
   cam:"sevenseg_cam_deviceid",
   lock:"sevenseg_lockback",
-  guide:"sevenseg_guide_v18",
-  an:"sevenseg_anms_v18",
-  digits:"sevenseg_digits_v18",
-  dec:"sevenseg_dec_v18",
-  inv:"sevenseg_inv_v18",
-  otsu:"sevenseg_otsu_v18",
-  otsuOff:"sevenseg_otsuOff_v18",
-  dil:"sevenseg_dil_v18",
-  diln:"sevenseg_diln_v18",
-  wins:"sevenseg_winscale_v19",
-  seg:"sevenseg_segthr_v18",
-  blank:"sevenseg_blankthr_v18",
-  nf:"sevenseg_needframes_v18",
-  gm:"sevenseg_grace_v18",
-  minv:"sevenseg_minv_v18",
-  maxv:"sevenseg_maxv_v18",
-  force:"sevenseg_force1dp_v18",
-  showW:"sevenseg_showwin_v18",
-  showB:"sevenseg_showbox_v18",
-  stab:"sevenseg_stab_v18",
-  hold:"sevenseg_hold_v18",
+  guide:"sevenseg_guide_v20",
+  an:"sevenseg_anms_v20",
+  digits:"sevenseg_digits_v20",
+  dec:"sevenseg_dec_v20",
+  inv:"sevenseg_inv_v20",
+  otsu:"sevenseg_otsu_v20",
+  otsuOff:"sevenseg_otsuOff_v20",
+  dil:"sevenseg_dil_v20",
+  diln:"sevenseg_diln_v20",
+  seg:"sevenseg_segthr_v20",
+  blank:"sevenseg_blankthr_v20",
+  nf:"sevenseg_needframes_v20",
+  gm:"sevenseg_grace_v20",
+  minv:"sevenseg_minv_v20",
+  maxv:"sevenseg_maxv_v20",
+  force:"sevenseg_force1dp_v20",
+  showW:"sevenseg_showwin_v20",
+  showB:"sevenseg_showbox_v20",
+  stab:"sevenseg_stab_v20",
+  hold:"sevenseg_hold_v20",
+  ang:"sevenseg_ang_v20",
+  ws:"sevenseg_winscale_v20",
 };
 
 function clamp(v,a,b){return Math.max(a,Math.min(b,v))}
@@ -192,11 +196,13 @@ function setLamp(state){
 }
 function syncLabels(){
   anMsVal.textContent=String(anMs.value);
-  winScaleVal.textContent=Number(winScale.value).toFixed(2);
   segThrVal.textContent=Number(segThr.value).toFixed(2);
   blankThrVal.textContent=Number(blankThr.value).toFixed(3);
   needFramesVal.textContent=String(needFrames.value);
   graceMsVal.textContent=String(graceMs.value);
+
+  angv.textContent=(+ang.value).toFixed(1);
+  winScaleVal.textContent=(+winScale.value).toFixed(2);
 
   gxv.textContent=(+gx.value).toFixed(2);
   gyv.textContent=(+gy.value).toFixed(2);
@@ -217,9 +223,7 @@ function applyGuideToUI(){
   gx.value=GUIDE.x; gy.value=GUIDE.y; gw.value=GUIDE.w; gh.value=GUIDE.h;
   syncLabels();
 }
-function saveGuide(){
-  localStorage.setItem(LS.guide, JSON.stringify(GUIDE));
-}
+function saveGuide(){ localStorage.setItem(LS.guide, JSON.stringify(GUIDE)); }
 
 function restore(){
   lockBack.checked=(localStorage.getItem(LS.lock)??"1")==="1";
@@ -227,13 +231,12 @@ function restore(){
   digitsEl.value=(localStorage.getItem(LS.digits)??"4");
   decEl.value=(localStorage.getItem(LS.dec)??"last");
 
-  invertEl.checked=(localStorage.getItem(LS.inv)??"1")==="1";
+  invertEl.checked=(localStorage.getItem(LS.inv)??"0")==="1";
   autoOtsu.checked=(localStorage.getItem(LS.otsu)??"1")==="1";
   otsuOff.value=(localStorage.getItem(LS.otsuOff)??"-15");
   dilate.checked=(localStorage.getItem(LS.dil)??"1")==="1";
   dilateN.value=(localStorage.getItem(LS.diln)??"1");
-  winScale.value=(localStorage.getItem(LS.wins)??"1.00");
-  segThr.value=(localStorage.getItem(LS.seg)??"0.28");
+  segThr.value=(localStorage.getItem(LS.seg)??"0.22");
   blankThr.value=(localStorage.getItem(LS.blank)??"0.02");
 
   needFrames.value=(localStorage.getItem(LS.nf)??"6");
@@ -246,6 +249,9 @@ function restore(){
   showDigitBoxes.checked=(localStorage.getItem(LS.showB)??"1")==="1";
   stabilizeEl.checked=(localStorage.getItem(LS.stab)??"1")==="1";
   holdEl.checked=(localStorage.getItem(LS.hold)??"1")==="1";
+
+  ang.value=(localStorage.getItem(LS.ang)??"0");
+  winScale.value=(localStorage.getItem(LS.ws)??"1.00");
 
   GUIDE=loadGuide();
   applyGuideToUI();
@@ -263,7 +269,6 @@ function persist(){
   otsuOff.onchange=()=>localStorage.setItem(LS.otsuOff, otsuOff.value);
   dilate.onchange=()=>localStorage.setItem(LS.dil, dilate.checked?"1":"0");
   dilateN.onchange=()=>localStorage.setItem(LS.diln, dilateN.value);
-  winScale.oninput=()=>{localStorage.setItem(LS.wins, winScale.value); syncLabels();}
   segThr.oninput=()=>{localStorage.setItem(LS.seg, segThr.value); syncLabels();}
   blankThr.oninput=()=>{localStorage.setItem(LS.blank, blankThr.value); syncLabels();}
 
@@ -277,6 +282,9 @@ function persist(){
   showDigitBoxes.onchange=()=>localStorage.setItem(LS.showB, showDigitBoxes.checked?"1":"0");
   stabilizeEl.onchange=()=>localStorage.setItem(LS.stab, stabilizeEl.checked?"1":"0");
   holdEl.onchange=()=>localStorage.setItem(LS.hold, holdEl.checked?"1":"0");
+
+  ang.oninput=()=>{localStorage.setItem(LS.ang, ang.value); syncLabels();}
+  winScale.oninput=()=>{localStorage.setItem(LS.ws, winScale.value); syncLabels();}
 
   const bindGuide=(el,key)=>{
     el.addEventListener("input", ()=>{
@@ -382,6 +390,7 @@ btnCopy.onclick=async()=>{
 };
 
 // ====== 7セグ辞書（a b c d e f g） ======
+// ※ 7 は機種によって f(左上) も点く事があるので両方許可
 const DIGIT_MAP = new Map([
   ["1111110","0"],
   ["0110000","1"],
@@ -390,7 +399,8 @@ const DIGIT_MAP = new Map([
   ["0110011","4"],
   ["1011011","5"],
   ["1011111","6"],
-  ["1110000","7"],
+  ["1110000","7"], // a b c
+  ["1110010","7"], // a b c f（あなたの指摘パターン）
   ["1111111","8"],
   ["1111011","9"],
 ]);
@@ -493,55 +503,33 @@ function guideRect(){
   return {x,y,w:ww,h:hh};
 }
 
-// ====== 7窓（1桁内の相対位置） ======
-function segWindowsForDigit(dx,dy,dw,dh){
-  // 「セグに沿う」窓ではなく、「セグを横断する」窓（断面）で黒率判定する
-  // - 水平セグ(a,g,d) → 垂直の細長い窓で横断
-  // - 垂直セグ(f,b,e,c) → 水平の細長い窓で横断
-  const s = Math.max(0.60, Math.min(1.80, parseFloat(winScale?.value ?? "1.0")));
-
-  const x0=dx, y0=dy, x1=dx+dw, y1=dy+dh;
-
-  // 中心座標（7セグ表示の一般的な比率）
-  const cx = x0 + dw*0.50;
-
-  const yA = y0 + dh*0.18;
-  const yG = y0 + dh*0.50;
-  const yD = y0 + dh*0.82;
-
-  const xL = x0 + dw*0.26;
-  const xR = x0 + dw*0.74;
-
-  const yU = y0 + dh*0.35;
-  const yL = y0 + dh*0.65;
-
-  // 窓サイズ（倍率で調整）
-  // 水平セグを横断する窓：縦長（幅は小さめ、高さはセグ厚みを跨ぐ程度）
-  const wH = dw*0.22*s;
-  const hH = dh*0.18*s;
-
-  // 垂直セグを横断する窓：横長
-  const wV = dw*0.26*s;
-  const hV = dh*0.16*s;
-
-  function rect(cx,cy,w,h){
-    let x=cx-w/2, y=cy-h/2;
-    // digit内に収める
-    x = Math.max(x0, Math.min(x, x1-w));
-    y = Math.max(y0, Math.min(y, y1-h));
-    return {x,y,w,h};
+// ====== 横断窓（upright基準・a b c d e f g） ======
+function segCrossWindowsForDigit(dx,dy,dw,dh, scale){
+  // セグ中心位置（upright想定）
+  const C={
+    a:{cx:dx+dw*0.50, cy:dy+dh*0.16, ori:"h"},
+    g:{cx:dx+dw*0.50, cy:dy+dh*0.50, ori:"h"},
+    d:{cx:dx+dw*0.50, cy:dy+dh*0.84, ori:"h"},
+    f:{cx:dx+dw*0.25, cy:dy+dh*0.32, ori:"v"},
+    b:{cx:dx+dw*0.75, cy:dy+dh*0.32, ori:"v"},
+    e:{cx:dx+dw*0.25, cy:dy+dh*0.68, ori:"v"},
+    c:{cx:dx+dw*0.75, cy:dy+dh*0.68, ori:"v"},
+  };
+  // 横断窓サイズ（ori=h:水平セグ→縦長窓, ori=v:垂直セグ→横長窓）
+  const baseH = {w: dw*0.12, h: dh*0.24}; // 縦長（a,g,d）
+  const baseV = {w: dw*0.24, h: dh*0.12}; // 横長（b,c,e,f）
+  const out={};
+  for(const k of ["a","b","c","d","e","f","g"]){
+    const cc=C[k];
+    const bsz = (cc.ori==="h")? baseH : baseV;
+    const ww = bsz.w * scale;
+    const hh = bsz.h * scale;
+    let x = cc.cx - ww/2, y = cc.cy - hh/2;
+    x = clamp(x, dx, dx+dw-ww);
+    y = clamp(y, dy, dy+dh-hh);
+    out[k]={x,y,w:ww,h:hh};
   }
-
-  const a = rect(cx, yA, wH, hH);
-  const g = rect(cx, yG, wH, hH);
-  const d = rect(cx, yD, wH, hH);
-
-  const f = rect(xL, yU, wV, hV);
-  const b = rect(xR, yU, wV, hV);
-  const e = rect(xL, yL, wV, hV);
-  const c = rect(xR, yL, wV, hV);
-
-  return {a,b,c,d,e,f,g};
+  return out;
 }
 
 function toCandidateString(s){
@@ -560,12 +548,48 @@ function passesGate(text){
   return v>=mn && v<=mx;
 }
 
+// --- 角度変換（ROI→upright / upright→ROI） ---
+function deg2rad(d){ return d*Math.PI/180; }
+
+function fitScaleForRotation(w,h,theta){
+  const c=Math.abs(Math.cos(theta)), s=Math.abs(Math.sin(theta));
+  const boundW = w*c + h*s;
+  const boundH = w*s + h*c;
+  return Math.min(w / boundW, h / boundH);
+}
+
+function drawRoiToUpright(r){
+  roi.width=r.w; roi.height=r.h;
+  ctxR.setTransform(1,0,0,1,0,0);
+  ctxR.drawImage(video, r.x, r.y, r.w, r.h, 0,0,r.w,r.h);
+
+  upr.width=r.w; upr.height=r.h;
+  const theta = deg2rad(parseFloat(ang.value));
+  const scale = fitScaleForRotation(r.w, r.h, theta); // clip防止
+  ctxU.setTransform(1,0,0,1,0,0);
+  ctxU.clearRect(0,0,r.w,r.h);
+  ctxU.translate(r.w/2, r.h/2);
+  ctxU.rotate(-theta);
+  ctxU.scale(scale, scale);
+  ctxU.drawImage(roi, -r.w/2, -r.h/2);
+  ctxU.setTransform(1,0,0,1,0,0);
+  return {theta, scale};
+}
+
+function mapUtoO(xu,yu, w,h, theta, scale){
+  const cx=w/2, cy=h/2;
+  let x = xu - cx, y = yu - cy;
+  const ct=Math.cos(theta), st=Math.sin(theta);
+  const xr = (ct*x - st*y) / scale;
+  const yr = (st*x + ct*y) / scale;
+  return {x: xr + cx, y: yr + cy};
+}
+
 function recognize(){
   const r=guideRect();
-  work.width=r.w; work.height=r.h;
-  ctxW.drawImage(video, r.x, r.y, r.w, r.h, 0,0, r.w, r.h);
+  const meta = drawRoiToUpright(r);
 
-  const img=ctxW.getImageData(0,0,r.w,r.h);
+  const img=ctxU.getImageData(0,0,r.w,r.h);
   const {bin, thr}=binarize(img, r.w, r.h);
 
   const nDigits=parseInt(digitsEl.value,10);
@@ -573,6 +597,7 @@ function recognize(){
 
   const segT=parseFloat(segThr.value);
   const blankT=parseFloat(blankThr.value);
+  const wScale=parseFloat(winScale.value);
 
   let outStr="";
   const perDigitDbg=[];
@@ -582,23 +607,27 @@ function recognize(){
     const inkAll = blackRatio(bin, r.w, dx, dy, dx+dw, dy+dh);
     if(inkAll < blankT){
       perDigitDbg.push(`#${i+1}: blank ink=${inkAll.toFixed(2)}`);
+      outStr += "?";
       continue;
     }
 
-    const w7=segWindowsForDigit(dx,dy,dw,dh);
+    const w7=segCrossWindowsForDigit(dx,dy,dw,dh,wScale);
     const bits=[];
+    const inks={};
     for(const key of ["a","b","c","d","e","f","g"]){
       const ww=w7[key];
       const ink=blackRatio(bin, r.w, ww.x, ww.y, ww.x+ww.w, ww.y+ww.h);
+      inks[key]=ink;
       bits.push(ink >= segT ? "1":"0");
     }
     const pat=bits.join("");
     const digit = DIGIT_MAP.get(pat) ?? "?";
     outStr += digit;
-    perDigitDbg.push(`#${i+1}: ${digit} pat=${pat} ink=${inkAll.toFixed(2)}`);
+    perDigitDbg.push(`#${i+1}: ${digit} pat=${pat} all=${inkAll.toFixed(2)} a=${inks.a.toFixed(2)} b=${inks.b.toFixed(2)} c=${inks.c.toFixed(2)} d=${inks.d.toFixed(2)} e=${inks.e.toFixed(2)} f=${inks.f.toFixed(2)} g=${inks.g.toFixed(2)}`);
   }
 
-  const candText = (/^[0-9?]+$/.test(outStr) && outStr.length>0) ? toCandidateString(outStr) : null;
+  const raw = outStr.replace(/\?/g,"");
+  const candText = (/^[0-9?]+$/.test(outStr) && raw.length>0) ? toCandidateString(outStr) : null;
 
   let conf=0;
   if(outStr && outStr.length){
@@ -606,14 +635,14 @@ function recognize(){
     conf = okc / outStr.length;
   }
 
-  return {text:candText, conf, thr, debug:perDigitDbg.join(" | ")};
+  return {text:candText, conf, thr, debug:perDigitDbg.join(" | "), meta};
 }
 
 // ====== 安定化 ======
 let lastCand=null, consec=0, stableText=null, lastOkAt=0;
 function resetStabilizer(){ lastCand=null; consec=0; stableText=null; lastOkAt=0; setLamp("yellow"); }
 
-function applyCandidate(candidate, conf, thr, debug){
+function applyCandidate(candidate, conf, thr, debug, meta){
   cand.textContent = `候補: ${candidate ?? "—"} (conf=${conf.toFixed(2)} thr=${thr})`;
   const need=parseInt(needFrames.value,10);
   const grace=parseInt(graceMs.value,10);
@@ -652,17 +681,26 @@ function applyCandidate(candidate, conf, thr, debug){
 
   const camLabel = selCam.selectedOptions?.[0]?.textContent || "";
   dbg.textContent =
-    `mode=7windows | digits=${digitsEl.value} inv=${invertEl.checked?1:0} otsu=${autoOtsu.checked?1:0} off=${otsuOff.value} win=${Number(winScale.value).toFixed(2)} `+
-    `dil=${dilate.checked?1:0} n=${dilateN.value} segThr=${Number(segThr.value).toFixed(2)} blankThr=${Number(blankThr.value).toFixed(3)} | `+
-    `stable=${stabilizeEl.checked?1:0} consec=${consec}/${need} grace=${grace}ms | cam="${camLabel}"
-`+
+    `mode=7cross+angle | ang=${(+ang.value).toFixed(1)}deg fitScale=${meta.scale.toFixed(3)} `+
+    `digits=${digitsEl.value} inv=${invertEl.checked?1:0} otsu=${autoOtsu.checked?1:0} off=${otsuOff.value} `+
+    `dil=${dilate.checked?1:0} n=${dilateN.value} winScale=${(+winScale.value).toFixed(2)} segThr=${Number(segThr.value).toFixed(2)} blankThr=${Number(blankThr.value).toFixed(3)} | `+
+    `stable=${stabilizeEl.checked?1:0} consec=${consec}/${need} grace=${grace}ms | cam="${camLabel}"\n`+
     debug;
 }
 
-function drawOverlay(){
-  ctxO.clearRect(0,0,overlay.width,overlay.height);
+function drawPoly(pts, fill, stroke){
+  ctxO.beginPath();
+  ctxO.moveTo(pts[0].x, pts[0].y);
+  for(let i=1;i<pts.length;i++) ctxO.lineTo(pts[i].x, pts[i].y);
+  ctxO.closePath();
+  if(fill){ ctxO.fillStyle=fill; ctxO.fill(); }
+  if(stroke){ ctxO.strokeStyle=stroke; ctxO.stroke(); }
+}
 
+function drawOverlay(meta){
+  ctxO.clearRect(0,0,overlay.width,overlay.height);
   const r=guideRect();
+
   ctxO.strokeStyle="rgba(255,0,0,.95)";
   ctxO.lineWidth=3;
   ctxO.strokeRect(r.x+1,r.y+1,r.w-2,r.h-2);
@@ -674,39 +712,55 @@ function drawOverlay(){
     ctxO.strokeStyle="rgba(255,0,0,.55)";
     ctxO.lineWidth=2;
     for(let i=1;i<nDigits;i++){
-      const x=r.x + i*step;
-      ctxO.beginPath(); ctxO.moveTo(x,r.y); ctxO.lineTo(x,r.y+r.h); ctxO.stroke();
+      const xu = i*step;
+      const p1 = mapUtoO(xu, 0, r.w, r.h, meta.theta, meta.scale);
+      const p2 = mapUtoO(xu, r.h, r.w, r.h, meta.theta, meta.scale);
+      ctxO.beginPath();
+      ctxO.moveTo(r.x+p1.x, r.y+p1.y);
+      ctxO.lineTo(r.x+p2.x, r.y+p2.y);
+      ctxO.stroke();
     }
   }
 
   if(showWindows.checked){
-    ctxO.fillStyle="rgba(255,255,0,.22)";
-    ctxO.strokeStyle="rgba(255,255,0,.55)";
     ctxO.lineWidth=1;
+    const wScale=parseFloat(winScale.value);
     for(let i=0;i<nDigits;i++){
-      const dx=r.x + i*step;
-      const dy=r.y;
-      const dw=step;
-      const dh=r.h;
-      const w7=segWindowsForDigit(dx,dy,dw,dh);
+      const dx=i*step, dw=step, dy=0, dh=r.h;
+      const w7=segCrossWindowsForDigit(dx,dy,dw,dh,wScale);
       for(const k of ["a","b","c","d","e","f","g"]){
         const w=w7[k];
-        ctxO.fillRect(w.x,w.y,w.w,w.h);
-        ctxO.strokeRect(w.x+0.5,w.y+0.5,w.w-1,w.h-1);
+        const corners=[
+          {x:w.x,     y:w.y},
+          {x:w.x+w.w, y:w.y},
+          {x:w.x+w.w, y:w.y+w.h},
+          {x:w.x,     y:w.y+w.h},
+        ].map(p=>{
+          const q=mapUtoO(p.x,p.y,r.w,r.h, meta.theta, meta.scale);
+          return {x:r.x+q.x, y:r.y+q.y};
+        });
+        drawPoly(corners, "rgba(255,255,0,.22)", "rgba(255,255,0,.55)");
       }
     }
   }
 }
 
 function loop(){
+  if(!stream){ rafId=requestAnimationFrame(loop); return; }
   const now=performance.now();
-  drawOverlay();
-
   const interval=parseInt(anMs.value,10);
-  if(now-lastAnalyzeAt >= interval && stream){
+
+  if(now-lastAnalyzeAt >= interval){
     lastAnalyzeAt=now;
     const res=recognize();
-    applyCandidate(res.text, res.conf, res.thr, res.debug);
+    drawOverlay(res.meta);
+    applyCandidate(res.text, res.conf, res.thr, res.debug, res.meta);
+  }else{
+    // 解析の合間もガイドだけ更新
+    const r=guideRect();
+    const theta=deg2rad(parseFloat(ang.value));
+    const scale=fitScaleForRotation(r.w,r.h,theta);
+    drawOverlay({theta,scale});
   }
   rafId=requestAnimationFrame(loop);
 }
