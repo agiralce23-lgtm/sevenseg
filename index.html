@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>7セグ認識 Webアプリ v15（TFJS学習モデル / 入力前処理つき）</title>
+<title>7セグ認識 Webアプリ v16（TFJS学習モデル / 自動桁分割）</title>
 <style>
   body{font-family:system-ui,-apple-system,sans-serif;margin:0;background:#111;color:#eee}
   .wrap{display:flex;flex-direction:column;gap:10px;padding:10px;max-width:1200px;margin:0 auto}
@@ -32,7 +32,6 @@
   .btn{background:#2a2a2a;border:1px solid #3a3a3a;color:#fff;border-radius:10px}
   .btn:active{transform:translateY(1px)}
   .smallinp{width:90px;padding:6px 8px;border-radius:8px;border:1px solid #333;background:#101010;color:#fff}
-  .warn{color:#ffdf8a}
   .digits{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
   .digcard{background:#121212;border:1px solid #2b2b2b;border-radius:10px;padding:8px}
   .digcard canvas{display:block;width:72px;height:72px;border-radius:8px;background:#000}
@@ -56,8 +55,8 @@
     <button id="btnLoadModel" class="btn" type="button">モデル読込</button>
 
     <label>推論間隔(ms)</label>
-    <input id="anMs" type="range" min="80" max="400" step="10" value="140">
-    <span id="anMsVal" class="mono">140</span>
+    <input id="anMs" type="range" min="80" max="400" step="10" value="160">
+    <span id="anMsVal" class="mono">160</span>
 
     <label>桁</label>
     <select id="digits">
@@ -73,11 +72,26 @@
 
     <span class="chip"><input id="stabilize" type="checkbox" checked>ちらつき防止</span>
     <span class="chip"><input id="hold" type="checkbox" checked>確定値ホールド</span>
+    <span class="chip"><input id="wasm" type="checkbox" checked>TFJS WASM（iPhone安定）</span>
   </div>
 
   <details open>
-    <summary>入力前処理（ここが「全部8」対策の本丸）</summary>
+    <summary>自動桁分割（ここがズレると conf が 0.09〜0.10 で「全部8」になります）</summary>
+    <div class="row" style="margin-top:8px">
+      <span class="chip"><input id="autoSplit" type="checkbox" checked>自動桁分割</span>
+      <span class="chip">検出縮小W <input id="splitW" class="smallinp" type="number" value="320"></span>
+      <span class="chip">列しきい値(%) <input id="colPct" class="smallinp" type="number" step="0.5" value="6.0"></span>
+      <span class="chip">最小幅(px) <input id="minRun" class="smallinp" type="number" value="10"></span>
+      <span class="chip">結合距離(px) <input id="mergeGap" class="smallinp" type="number" value="6"></span>
+    </div>
+    <div class="hint" style="margin-top:8px">
+      ・kg の文字や枠が入っても、数字の柱（縦投影）で桁領域を見つけます。<br>
+      ・うまく分割できない場合は「列しきい値(%)」を 4〜10 の範囲で動かしてください。
+    </div>
+  </details>
 
+  <details open>
+    <summary>入力前処理（まずは raw 推奨）</summary>
     <div class="row" style="margin-top:8px">
       <label>入力モード</label>
       <select id="preMode">
@@ -86,32 +100,27 @@
         <option value="otsu">otsu（二値化:自動しきい値）</option>
         <option value="otsu_inv">otsu+invert（二値化して反転）</option>
       </select>
-
-      <span class="chip"><input id="autoInv" type="checkbox" checked>自動反転（平均で判定）</span>
-      <span class="chip"><input id="norm01" type="checkbox" checked>0..1正規化</span>
-
+      <span class="chip"><input id="autoInv" type="checkbox">自動反転（平均で判定）</span>
       <span class="chip">γ <input id="gamma" class="smallinp" type="number" step="0.1" value="1.0"></span>
-      <span class="chip">コントラスト <input id="contrast" class="smallinp" type="number" step="0.1" value="1.0"></span>
+      <span class="chip">コントラスト <input id="contrast" class="smallinp" type="number" step="0.1" value="1.2"></span>
+      <span class="chip"><input id="norm01" type="checkbox" checked>0..1正規化</span>
     </div>
 
-    <div class="kv"><label>左右マージン（%）</label><input id="mx" type="range" min="0" max="40" step="1" value="12"><span id="mxv"></span></div>
-    <div class="kv"><label>上下マージン（%）</label><input id="my" type="range" min="0" max="40" step="1" value="10"><span id="myv"></span></div>
+    <div class="kv"><label>上下マージン（%）</label><input id="my" type="range" min="0" max="40" step="1" value="8"><span id="myv"></span></div>
 
-    <div class="hint warn" style="margin-top:8px">
-      「全部 888.8」は、だいたい <b>前処理の極性（黒セグ/白セグ）</b> か <b>桁切り出し</b> の不一致で起きます。<br>
-      まずは <b>入力モード</b> を <b>otsu</b> と <b>otsu+invert</b> で切り替え、下の「桁プレビュー」が “数字っぽく見える” 方に合わせてください。
+    <div class="hint" style="margin-top:8px">
+      あなたの学習スクリプト（CNN）は基本「グレースケール」学習なので、まず raw で合わせるのが近道です。
     </div>
   </details>
 
   <details open>
     <summary>安定化（確定表示）</summary>
     <div class="kv"><label>確定に必要な連続フレーム</label><input id="needFrames" type="range" min="1" max="20" step="1" value="6"><span id="needFramesVal"></span></div>
-    <div class="kv"><label>確定に必要な信頼度</label><input id="needConf" type="range" min="0.20" max="0.99" step="0.01" value="0.60"><span id="needConfVal"></span></div>
+    <div class="kv"><label>確定に必要な信頼度</label><input id="needConf" type="range" min="0.20" max="0.99" step="0.01" value="0.55"><span id="needConfVal"></span></div>
     <div class="kv"><label>失敗許容（ms）</label><input id="graceMs" type="range" min="0" max="2500" step="50" value="900"><span id="graceMsVal"></span></div>
     <div class="row" style="margin-top:8px">
       <span class="chip">範囲 <input id="minVal" class="smallinp" type="number" step="0.1" value="10"> ～ <input id="maxVal" class="smallinp" type="number" step="0.1" value="250"></span>
       <span class="chip"><input id="force1dp" type="checkbox" checked>小数1桁に揃える</span>
-      <span class="chip"><input id="wasm" type="checkbox" checked>TFJS WASM（iPhone安定）</span>
     </div>
   </details>
 
@@ -150,31 +159,30 @@
 
       <hr style="border:0;border-top:1px solid #333;margin:10px 0">
       <div class="hint">
-        ・「桁プレビュー」が数字っぽく見える入力モードに合わせると一気に直ります。<br>
-        ・それでも全部8なら、学習データが “1桁切り出し” になってない（全体画像を入れた等）の可能性が高いです。<br>
+        ・conf が 0.09〜0.10 なら「モデルが桁を見失ってる」状態です（自動桁分割とROIで直ります）。<br>
       </div>
     </div>
   </div>
 
   <canvas id="work" style="display:none"></canvas>
+  <canvas id="seg" style="display:none"></canvas>
   <canvas id="dig" style="display:none"></canvas>
 </div>
 
 <script>
 const $ = (id)=>document.getElementById(id);
 
-const video=$("video"), overlay=$("overlay"), work=$("work"), dig=$("dig");
+const video=$("video"), overlay=$("overlay"), work=$("work"), seg=$("seg"), dig=$("dig");
 const ctxO = overlay.getContext('2d',{willReadFrequently:true});
 const ctxW = work.getContext('2d',{willReadFrequently:true});
+const ctxS = seg.getContext('2d',{willReadFrequently:true});
 const ctxD = dig.getContext('2d',{willReadFrequently:true});
 
 const btnStart=$("btnStart"), btnStop=$("btnStop"), selCam=$("selCam");
 const lockBack=$("lockBack");
-
 const useMLEl=$("useML"), btnLoadModel=$("btnLoadModel");
 const anMsEl=$("anMs"), anMsVal=$("anMsVal");
 const digitsEl=$("digits"), decEl=$("decimal");
-
 const stabilizeEl=$("stabilize"), holdEl=$("hold");
 const needFramesEl=$("needFrames"), needFramesVal=$("needFramesVal");
 const needConfEl=$("needConf"), needConfVal=$("needConfVal");
@@ -182,9 +190,10 @@ const graceMsEl=$("graceMs"), graceMsVal=$("graceMsVal");
 const minValEl=$("minVal"), maxValEl=$("maxVal"), force1dpEl=$("force1dp");
 const wasmEl=$("wasm");
 
+const autoSplitEl=$("autoSplit"), splitWEl=$("splitW"), colPctEl=$("colPct"), minRunEl=$("minRun"), mergeGapEl=$("mergeGap");
+
 const preModeEl=$("preMode"), autoInvEl=$("autoInv"), norm01El=$("norm01");
-const gammaEl=$("gamma"), contrastEl=$("contrast");
-const mxEl=$("mx"), myEl=$("my"), mxv=$("mxv"), myv=$("myv");
+const gammaEl=$("gamma"), contrastEl=$("contrast"), myEl=$("my"), myv=$("myv");
 
 const outEl=$("out"), candLine=$("candLine"), dbgEl=$("dbg"), roiEl=$("roi"), lampEl=$("lamp"), btnCopy=$("btnCopy");
 const mlStateEl=$("mlState"), digPrev=$("digPrev");
@@ -195,13 +204,14 @@ const btnRoiReset=$("btnRoiReset");
 let stream=null, rafId=null;
 
 const LS={
-  cam:"sevenseg_cam_deviceid", lock:"sevenseg_lockback", roi:"sevenseg_roi_v15",
+  cam:"sevenseg_cam_deviceid", lock:"sevenseg_lockback", roi:"sevenseg_roi_v16",
   useML:"sevenseg_useml", an:"sevenseg_anms", digits:"sevenseg_digits", dec:"sevenseg_dec",
   stab:"sevenseg_stab", hold:"sevenseg_hold", nf:"sevenseg_needframes", nc:"sevenseg_needconf", gm:"sevenseg_gracems",
   minv:"sevenseg_minval", maxv:"sevenseg_maxval", force:"sevenseg_force1dp", wasm:"sevenseg_wasm",
   model:"sevenseg_model_url",
   premode:"sevenseg_premode", autoinv:"sevenseg_autoinv", norm01:"sevenseg_norm01", gamma:"sevenseg_gamma", contrast:"sevenseg_contrast",
-  mx:"sevenseg_mx", my:"sevenseg_my"
+  my:"sevenseg_my",
+  autos:"sevenseg_autosplit", splitw:"sevenseg_splitw", colpct:"sevenseg_colpct", minrun:"sevenseg_minrun", mergegap:"sevenseg_mergegap"
 };
 
 function clamp(v,a,b){return Math.max(a,Math.min(b,v))}
@@ -222,7 +232,7 @@ function setRoiBox(){
 window.addEventListener('resize', setRoiBox);
 
 // ROI
-const defaultRoi={x:0.18,y:0.44,w:0.64,h:0.18};
+const defaultRoi={x:0.18,y:0.44,w:0.64,h:0.20};
 let ROI=loadROI();
 function loadROI(){
   try{
@@ -238,15 +248,13 @@ function syncLabels(){
   needFramesVal.textContent=String(needFramesEl.value);
   needConfVal.textContent=Number(needConfEl.value).toFixed(2);
   graceMsVal.textContent=String(graceMsEl.value);
+  myv.textContent=myEl.value+"%";
 
   roiX.value=ROI.x; roiY.value=ROI.y; roiW.value=ROI.w; roiH.value=ROI.h;
   roiXv.textContent=ROI.x.toFixed(2);
   roiYv.textContent=ROI.y.toFixed(2);
   roiWv.textContent=ROI.w.toFixed(2);
   roiHv.textContent=ROI.h.toFixed(2);
-
-  mxv.textContent=mxEl.value+"%";
-  myv.textContent=myEl.value+"%";
 }
 function bindRoi(sl,key){
   sl.addEventListener('input', ()=>{
@@ -266,14 +274,14 @@ function restore(){
   lockBack.checked=(localStorage.getItem(LS.lock)??"1")==="1";
   selCam.value=localStorage.getItem(LS.cam)||"";
   useMLEl.checked=(localStorage.getItem(LS.useML)??"1")==="1";
-  anMsEl.value=(localStorage.getItem(LS.an)??"140");
+  anMsEl.value=(localStorage.getItem(LS.an)??"160");
   digitsEl.value=(localStorage.getItem(LS.digits)??"4");
   decEl.value=(localStorage.getItem(LS.dec)??"last");
 
   stabilizeEl.checked=(localStorage.getItem(LS.stab)??"1")==="1";
   holdEl.checked=(localStorage.getItem(LS.hold)??"1")==="1";
   needFramesEl.value=(localStorage.getItem(LS.nf)??"6");
-  needConfEl.value=(localStorage.getItem(LS.nc)??"0.60");
+  needConfEl.value=(localStorage.getItem(LS.nc)??"0.55");
   graceMsEl.value=(localStorage.getItem(LS.gm)??"900");
   minValEl.value=(localStorage.getItem(LS.minv)??"10");
   maxValEl.value=(localStorage.getItem(LS.maxv)??"250");
@@ -281,12 +289,17 @@ function restore(){
   wasmEl.checked=(localStorage.getItem(LS.wasm)??"1")==="1";
 
   preModeEl.value=(localStorage.getItem(LS.premode)??"raw");
-  autoInvEl.checked=(localStorage.getItem(LS.autoinv)??"1")==="1";
+  autoInvEl.checked=(localStorage.getItem(LS.autoinv)??"0")==="1";
   norm01El.checked=(localStorage.getItem(LS.norm01)??"1")==="1";
   gammaEl.value=(localStorage.getItem(LS.gamma)??"1.0");
-  contrastEl.value=(localStorage.getItem(LS.contrast)??"1.0");
-  mxEl.value=(localStorage.getItem(LS.mx)??"12");
-  myEl.value=(localStorage.getItem(LS.my)??"10");
+  contrastEl.value=(localStorage.getItem(LS.contrast)??"1.2");
+  myEl.value=(localStorage.getItem(LS.my)??"8");
+
+  autoSplitEl.checked=(localStorage.getItem(LS.autos)??"1")==="1";
+  splitWEl.value=(localStorage.getItem(LS.splitw)??"320");
+  colPctEl.value=(localStorage.getItem(LS.colpct)??"6.0");
+  minRunEl.value=(localStorage.getItem(LS.minrun)??"10");
+  mergeGapEl.value=(localStorage.getItem(LS.mergegap)??"6");
 
   syncLabels();
 }
@@ -296,7 +309,7 @@ function persist(){
   lockBack.onchange=()=>localStorage.setItem(LS.lock, lockBack.checked?"1":"0");
   useMLEl.onchange=()=>localStorage.setItem(LS.useML, useMLEl.checked?"1":"0");
   anMsEl.oninput=()=>{localStorage.setItem(LS.an,anMsEl.value); syncLabels();}
-  digitsEl.onchange=()=>localStorage.setItem(LS.digits,digitsEl.value);
+  digitsEl.onchange=()=>{localStorage.setItem(LS.digits,digitsEl.value); buildDigitPreview();}
   decEl.onchange=()=>localStorage.setItem(LS.dec,decEl.value);
   stabilizeEl.onchange=()=>localStorage.setItem(LS.stab, stabilizeEl.checked?"1":"0");
   holdEl.onchange=()=>localStorage.setItem(LS.hold, holdEl.checked?"1":"0");
@@ -313,8 +326,13 @@ function persist(){
   norm01El.onchange=()=>localStorage.setItem(LS.norm01, norm01El.checked?"1":"0");
   gammaEl.onchange=()=>localStorage.setItem(LS.gamma, gammaEl.value);
   contrastEl.onchange=()=>localStorage.setItem(LS.contrast, contrastEl.value);
-  mxEl.oninput=()=>{localStorage.setItem(LS.mx, mxEl.value); syncLabels();}
   myEl.oninput=()=>{localStorage.setItem(LS.my, myEl.value); syncLabels();}
+
+  autoSplitEl.onchange=()=>localStorage.setItem(LS.autos, autoSplitEl.checked?"1":"0");
+  splitWEl.onchange=()=>localStorage.setItem(LS.splitw, splitWEl.value);
+  colPctEl.onchange=()=>localStorage.setItem(LS.colpct, colPctEl.value);
+  minRunEl.onchange=()=>localStorage.setItem(LS.minrun, minRunEl.value);
+  mergeGapEl.onchange=()=>localStorage.setItem(LS.mergegap, mergeGapEl.value);
 }
 persist();
 
@@ -412,17 +430,12 @@ function passesGate(text){
   if(v<minV || v>maxV) return false;
   return true;
 }
-function clamp01(x){ return Math.max(0, Math.min(1, x)); }
 function setGammaContrast(x){
   const g = parseFloat(gammaEl.value||"1.0");
   const c = parseFloat(contrastEl.value||"1.0");
   let y = x;
-  if(g !== 1.0){
-    y = Math.pow(clamp01(y), 1.0/g);
-  }
-  if(c !== 1.0){
-    y = clamp01((y-0.5)*c + 0.5);
-  }
+  if(g !== 1.0) y = Math.pow(Math.max(0,Math.min(1,y)), 1.0/g);
+  if(c !== 1.0) y = Math.max(0,Math.min(1,(y-0.5)*c + 0.5));
   return y;
 }
 btnCopy.onclick=async()=>{
@@ -497,12 +510,8 @@ function buildDigitPreview(){
     digMeta.push(m);
   }
 }
-digitsEl.onchange=()=>{
-  localStorage.setItem(LS.digits,digitsEl.value);
-  buildDigitPreview();
-};
 
-// ===== preprocessing (Otsu) =====
+// ===== preprocessing utilities =====
 function otsuThreshold(grayArr){
   const hist = new Uint32Array(256);
   for(let i=0;i<grayArr.length;i++){
@@ -533,6 +542,125 @@ function otsuThreshold(grayArr){
   return threshold/255.0;
 }
 
+function grayFromCanvas(cnv){
+  const ctx = cnv.getContext("2d",{willReadFrequently:true});
+  const {width:w,height:h}=cnv;
+  const d = ctx.getImageData(0,0,w,h).data;
+  const arr = new Float32Array(w*h);
+  for(let i=0,p=0;i<arr.length;i++,p+=4){
+    const r=d[p], g=d[p+1], b=d[p+2];
+    let x = (0.299*r + 0.587*g + 0.114*b) / 255.0;
+    x = setGammaContrast(x);
+    arr[i]=x;
+  }
+  return {arr,w,h};
+}
+
+// 自動桁分割：縦投影で“インクのある列”を run-length で抽出
+function autoSplitBoxes(srcCanvas, nDigits){
+  // scale ROI to manageable width
+  const targetW = Math.max(120, Math.min(600, parseInt(splitWEl.value||"320",10)));
+  const scale = targetW / srcCanvas.width;
+  const w = targetW;
+  const h = Math.max(40, Math.floor(srcCanvas.height * scale));
+  seg.width=w; seg.height=h;
+  ctxS.imageSmoothingEnabled = true;
+  ctxS.clearRect(0,0,w,h);
+  ctxS.drawImage(srcCanvas, 0,0, srcCanvas.width, srcCanvas.height, 0,0, w,h);
+
+  const {arr:gray} = grayFromCanvas(seg);
+
+  // decide invert for segmentation
+  let doInv = autoInvEl.checked && (gray.reduce((a,b)=>a+b,0)/gray.length > 0.62);
+
+  // binarize for projection
+  const thr = otsuThreshold(gray);
+  const bin = new Uint8Array(gray.length);
+  for(let i=0;i<gray.length;i++){
+    let v = (gray[i] < thr) ? 1 : 0; // dark=ink
+    if(doInv) v = 1 - v;
+    bin[i]=v;
+  }
+
+  const colPct = parseFloat(colPctEl.value||"6.0")/100.0; // percent of rows
+  const colMin = Math.max(1, Math.floor(h * colPct));
+
+  const colSum = new Uint16Array(w);
+  for(let x=0;x<w;x++){
+    let s=0;
+    for(let y=0;y<h;y++){
+      s += bin[y*w + x];
+    }
+    colSum[x]=s;
+  }
+
+  // active columns
+  const active = new Uint8Array(w);
+  for(let x=0;x<w;x++) active[x] = colSum[x] >= colMin ? 1 : 0;
+
+  // runs
+  const runs=[];
+  let x=0;
+  while(x<w){
+    while(x<w && !active[x]) x++;
+    if(x>=w) break;
+    let x1=x;
+    while(x<w && active[x]) x++;
+    let x2=x-1;
+    runs.push([x1,x2]);
+  }
+
+  // filter tiny
+  const minRun = Math.max(2, parseInt(minRunEl.value||"10",10));
+  let filtered = runs.filter(r => (r[1]-r[0]+1) >= minRun);
+
+  // merge near gaps (digit might be split by inner hole)
+  const mergeGap = Math.max(0, parseInt(mergeGapEl.value||"6",10));
+  const merged=[];
+  for(const r of filtered){
+    if(!merged.length){ merged.push(r.slice()); continue; }
+    const last=merged[merged.length-1];
+    if(r[0]-last[1] <= mergeGap){
+      last[1]=r[1];
+    }else{
+      merged.push(r.slice());
+    }
+  }
+
+  // if too many, keep widest nDigits (ignore small text like "kg")
+  let chosen = merged;
+  if(chosen.length > nDigits){
+    chosen = chosen
+      .map(r=>({r, w:(r[1]-r[0]+1)}))
+      .sort((a,b)=>b.w-a.w)
+      .slice(0,nDigits)
+      .map(o=>o.r)
+      .sort((a,b)=>a[0]-b[0]);
+  }
+
+  // if too few, fallback equal split
+  if(chosen.length < nDigits){
+    const ww = srcCanvas.width;
+    const step = ww / nDigits;
+    const boxes=[];
+    for(let i=0;i<nDigits;i++){
+      const x1=Math.floor(i*step);
+      const x2=Math.floor((i+1)*step)-1;
+      boxes.push([x1,x2]);
+    }
+    return {boxes, debug:`split=fallback runs=${merged.length}`};
+  }
+
+  // map back to original srcCanvas coords
+  const boxes = chosen.map(r=>{
+    const x1 = Math.floor(r[0] / scale);
+    const x2 = Math.floor((r[1]+1) / scale) - 1;
+    return [clamp(x1,0,srcCanvas.width-1), clamp(x2,0,srcCanvas.width-1)];
+  });
+
+  return {boxes, debug:`split=auto runs=${merged.length} used=${boxes.length} inv=${doInv?1:0}`};
+}
+
 // digit crop → tensor + preview
 function cropDigitToArray(previewCanvas, srcCanvas, sx, sy, sw, sh, outW, outH){
   const pctx = previewCanvas.getContext("2d",{willReadFrequently:true});
@@ -554,25 +682,34 @@ function cropDigitToArray(previewCanvas, srcCanvas, sx, sy, sw, sh, outW, outH){
     arr[i]=x;
   }
 
+  // apply preMode on model input
   const mean = arr.reduce((a,b)=>a+b,0)/arr.length;
-  const autoInv = autoInvEl.checked;
+  let doAutoInvert = autoInvEl.checked && (mean > 0.62);
   let preMode = preModeEl.value;
-  let doAutoInvert = autoInv && (mean > 0.62);
-
   if(preMode==="invert") doAutoInvert = true;
 
   if(preMode==="otsu" || preMode==="otsu_inv"){
     const thr = otsuThreshold(arr);
-    for(let i=0;i<arr.length;i++){
-      arr[i] = (arr[i] < thr) ? 1.0 : 0.0;
-    }
+    for(let i=0;i<arr.length;i++) arr[i] = (arr[i] < thr) ? 1.0 : 0.0;
     if(preMode==="otsu_inv") doAutoInvert = !doAutoInvert;
   }
-
   if(doAutoInvert){
     for(let i=0;i<arr.length;i++) arr[i] = 1.0 - arr[i];
   }
-  return {arr};
+
+  // norm
+  if(!norm01El.checked){
+    for(let i=0;i<arr.length;i++) arr[i] = arr[i]*255.0; // rarely needed
+  }
+  return {arr, mean, inv:doAutoInvert?1:0};
+}
+
+function toCandidateString(s){
+  if(decEl.value==="last"){
+    if(s.length>=2) s = s.slice(0,-1) + "." + s.slice(-1);
+  }
+  s = toFixed1dp(s);
+  return s;
 }
 
 async function predictDigitsWithModel(srcCanvas, nDigits){
@@ -581,23 +718,35 @@ async function predictDigitsWithModel(srcCanvas, nDigits){
   const H = ish[1]||32, W = ish[2]||32;
 
   const w0 = srcCanvas.width, h0 = srcCanvas.height;
-
-  const mx = Math.floor(w0 * (parseInt(mxEl.value,10)/100));
   const my = Math.floor(h0 * (parseInt(myEl.value,10)/100));
-  const x0 = mx, y0 = my;
-  const ww = Math.max(10, w0 - mx*2);
+  const y0 = my;
   const hh = Math.max(10, h0 - my*2);
-  const digitW = ww / nDigits;
 
+  // decide x boxes
+  let boxes, splitDebug;
+  if(autoSplitEl.checked){
+    const res = autoSplitBoxes(srcCanvas, nDigits);
+    boxes = res.boxes;
+    splitDebug = res.debug;
+  }else{
+    const step = w0 / nDigits;
+    boxes = Array.from({length:nDigits}, (_,i)=>[Math.floor(i*step), Math.floor((i+1)*step)-1]);
+    splitDebug = "split=equal";
+  }
+
+  // run inference per digit
   let s="", confs=[];
+  let invAny=0;
   for(let i=0;i<nDigits;i++){
-    const dx = Math.floor(x0 + i*digitW);
-    const dw = Math.max(1, Math.floor(digitW));
+    const [x1,x2]=boxes[i];
+    const dw = Math.max(2, x2-x1+1);
+    const sx = x1;
+
     const preview = digCanvases[i];
+    const {arr, inv} = cropDigitToArray(preview, srcCanvas, sx, y0, dw, hh, W, H);
+    invAny |= inv;
 
-    const {arr} = cropDigitToArray(preview, srcCanvas, dx, y0, dw, hh, W, H);
     const t = tf.tensor4d(arr, [1,H,W,1]);
-
     const p = tf.tidy(()=>{
       const y = model.predict(t);
       const a = y.dataSync();
@@ -608,20 +757,16 @@ async function predictDigitsWithModel(srcCanvas, nDigits){
     let bestI=0, bestV=p[0];
     for(let k=1;k<p.length;k++){ if(p[k]>bestV){bestV=p[k]; bestI=k;} }
 
+    // class 10 = blank（学習に入れている前提）
     if(bestI===10) s += ""; else s += String(bestI);
     confs.push(bestV);
-
-    digMeta[i].textContent = `#${i+1}: cls=${bestI} p=${bestV.toFixed(2)} mode=${preModeEl.value}`;
+    digMeta[i].textContent = `#${i+1}: cls=${bestI} p=${bestV.toFixed(2)} box=[${x1},${x2}]`;
   }
 
-  if(decEl.value==="last"){
-    if(s.length>=2) s = s.slice(0,-1) + "." + s.slice(-1);
-  }
-  s = toFixed1dp(s);
-
-  const ok=/^[0-9]+(\.[0-9]+)?$/.test(s);
+  let text = toCandidateString(s);
+  const ok=/^[0-9]+(\.[0-9]+)?$/.test(text);
   const conf = confs.length ? confs.reduce((a,b)=>a+b,0)/confs.length : 0;
-  return {text: ok?s:null, conf, debug:`avgMaxP=${conf.toFixed(2)}`};
+  return {text: ok?text:null, conf, debug:`${splitDebug} premode=${preModeEl.value} invAny=${invAny}`};
 }
 
 // ===== stabilizer =====
@@ -707,7 +852,7 @@ function applyCandidate(candidate, conf, debug){
 
   const camLabel = selCam.selectedOptions?.[0]?.textContent || "";
   dbgEl.textContent =
-    `ml=${useMLEl.checked?1:0} ready=${modelReady?1:0} premode=${preModeEl.value} autoInv=${autoInvEl.checked?1:0} `+
+    `ml=${useMLEl.checked?1:0} ready=${modelReady?1:0} ${debug} | `+
     `conf=${conf.toFixed(2)} needConf=${Number(needConfEl.value).toFixed(2)} `+
     `stable=${stabilizeEl.checked?1:0} consec=${consec}/${needFrames} grace=${graceMs}ms | cam="${camLabel}"`;
 }
@@ -715,7 +860,7 @@ function applyCandidate(candidate, conf, debug){
 // init
 navigator.mediaDevices?.addEventListener?.('devicechange', ()=>listCams({preserve:true,autoPickBack:true}));
 listCams({preserve:true,autoPickBack:true}).catch(()=>{});
-setRoiBox(); syncLabels(); buildDigitPreview(); setLamp("yellow");
+setRoiBox(); syncLabels(); buildDigitPreview(); setLamp("yellow"); resetStabilizer();
 </script>
 </body>
 </html>
